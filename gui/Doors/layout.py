@@ -159,7 +159,11 @@ def relax(
         incident[spring.a].append(k)
         incident[spring.b].append(k)
 
-    margin_x = margin_y = HARD_GAP if cold else MIN_GAP
+    # The push between rooms is at most CONTACT_STRENGTH x its reach, so with a short reach it is weak. While
+    # settling, the links' pull and the hard minimum gap shrink with it. Otherwise the links press blocks onto
+    # the hard gap, where they slide round each other and the map never rests.
+    tight = min(1.0, spacing / CONTACT_RANGE) if cold else 1.0
+    margin_x = margin_y = HARD_GAP * tight if cold else MIN_GAP
     reach = spacing
     contact = contact_range(spacing, circles)
 
@@ -334,7 +338,7 @@ def relax(
     for it in range(iterations):
         cooling = 1 - it / iterations
         # Cold: no large moves
-        temperature = 10 if cold else 80 * cooling + 4
+        temperature = 10 * tight if cold else 80 * cooling + 4
         prev_x, prev_y = xs[:], ys[:]  # for the half step when cold
         tx = [0.0] * n
         ty = [0.0] * n
@@ -356,6 +360,7 @@ def relax(
                     # Beyond LINK_PULL_MAX the pull grows as sqrt(stretch)
                     pull = math.sqrt(stretch * pull_limit[k])
                     ex, ey = ex / stretch * pull, ey / stretch * pull
+                ex, ey = ex * tight, ey * tight
             # Equal and opposite, split by inverse mass; asymmetric pulls make the map drift
             share = 2 / max(degree[ia], degree[ib]) / (weight[ia] + weight[ib])
             tx[ib] += ex * share * weight[ia]
