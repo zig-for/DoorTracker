@@ -39,6 +39,13 @@ TITLE = "Janker Door Tracker"
 SAVE_DELAY = 1000
 # and once more this long after that if Simulate is on, as the cards keep moving
 DRIFT_SAVE_DELAY = 10_000
+# Holds the name of the autosave written last
+LATEST = "latest.txt"
+
+
+def autosave_name(seed_hash: str | None) -> str:
+    """Each seed's map has its own file. A map not yet seen in a game has no seed."""
+    return f"autosave-{seed_hash}.yaml" if seed_hash else "autosave.yaml"
 
 
 class IconPicker(QDialog):
@@ -127,8 +134,10 @@ class MainWindow(QMainWindow):
     def __init__(self, args: argparse.Namespace):
         super().__init__()
         self.args = args
-        self.autosave: Path | None = None  # see start_autosave
+        self.autosave: Path | None = None  # folder; see start_autosave
+        self._latest: str | None = None  # autosave file the next launch loads, as LATEST says
         self.autosave_on = True  # File -> Autosave
+        self.seed_hash: str | None = None  # of the game the map was made on, once known; kept in the tracker file
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.timeout.connect(self._save_after_change)
@@ -240,6 +249,7 @@ class MainWindow(QMainWindow):
                 data = parse_dr_spoiler(fh)
         if "Agahnims_Tower" in data:
             data["Castle_Tower"] = data.pop("Agahnims_Tower")
+        self.seed_hash = data.pop("seed_hash", None)
         # A spoiler lists lobbies apart from the dungeons: file each under the dungeon that owns it
         for lobby, door in (data.pop("lobbies", None) or {}).items():
             if not isinstance(door, str):
@@ -266,16 +276,22 @@ class MainWindow(QMainWindow):
 
     def tracker_data(self) -> dict[str, Any]:
         """Everything a tracker file holds."""
-        return {dungeon: page.return_connections() for dungeon, page in self.pages.items()}
+        data: dict[str, Any] = {dungeon: page.return_connections() for dungeon, page in self.pages.items()}
+        if self.seed_hash is not None:
+            data["seed_hash"] = self.seed_hash
+        return data
 
     # ----------------------------------------------------------------- autosave
 
-    def start_autosave(self, file: Path, restore: bool) -> None:
-        """Keep the map in this file from here on. restore: first load the map the last run left in it.
+    def start_autosave(self, folder: Path, restore: bool) -> None:
+        """Keep the map in this folder from here on. restore: first load the map the last run left there.
 
-        Nothing is saved before this is called, so a new window cannot save its empty map over the file.
+        Nothing is saved before this is called, so a new window cannot save its empty map over a file.
         """
-        if restore and file.exists():
+        latest = folder / LATEST
+        if restore and latest.exists():
+            self._latest = latest.read_text()
+            file = folder / self._latest
             try:
                 self.load_file(str(file))
             except Exception as error:
@@ -288,7 +304,7 @@ class MainWindow(QMainWindow):
                     f"{file}\n\n{error!r}\n\nThe file has been left as it is, and File -> Autosave has been "
                     "turned off. Turning it on again will save over the file.",
                 )
-        self.autosave = file
+        self.autosave = folder
         if not restore:
             self.map_changed()
 
@@ -311,8 +327,29 @@ class MainWindow(QMainWindow):
             self._drift_timer.start(DRIFT_SAVE_DELAY)
 
     def _write_autosave(self) -> None:
-        if self.autosave is not None and self.autosave_on:
-            files.write_text(self.autosave, yaml.dump(self.tracker_data()))
+        if self.autosave is None or not self.autosave_on:
+            return
+        name = autosave_name(self.seed_hash)
+        files.write_text(self.autosave / name, yaml.dump(self.tracker_data()))
+        if name != self._latest:
+            files.write_text(self.autosave / LATEST, name)
+            self._latest = name
+
+    def seed_seen(self, seed_hash: str) -> None:
+        """The auto-tracker is in a game with this hash. Each seed has its own autosave: a new seed swaps maps."""
+        if seed_hash == self.seed_hash:
+            return
+        if self.seed_hash is not None and self.autosave is not None and self.autosave_on:
+            # The map on screen is another seed's: put it away and bring out this one's
+            self._write_autosave()
+            file = self.autosave / autosave_name(seed_hash)
+            if file.exists():
+                self.load_file(str(file))
+            else:
+                for page in self.pages.values():
+                    page.init_page()
+        self.seed_hash = seed_hash
+        self.map_changed()
 
     def reset_tracker(self):
         answer = QMessageBox.question(
@@ -461,7 +498,7 @@ def main():
     install_interrupt_handler(app, window)
     if args.tracker_file:
         window.load_file(args.tracker_file)
-    window.start_autosave(folder / "autosave.yaml", restore=not args.tracker_file)
+    window.start_autosave(folder, restore=not args.tracker_file)
     if not args.no_autotrack:
         window.start_tracking()
     sys.exit(app.exec())

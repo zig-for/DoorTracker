@@ -31,6 +31,7 @@ dungeon_ids = {
 
 mem_addresses = {
     "race": (0x180213, 0x1),
+    "seed_hash": (0x180215, 0x5),  # the code shown on the file select screen; differs per seed
     "gamemode": (0xF50010, 0x1),
     "indoors": (0xF5001B, 0x1),
     "link_y": (0xF50020, 0x2),
@@ -121,6 +122,8 @@ class TrackerUI(Protocol):
     def set_devices(self, uris: list[str]) -> None: ...
 
     def race_rom_warning(self) -> None: ...
+
+    def seed_seen(self, seed_hash: str) -> None: ...
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -239,6 +242,9 @@ async def _sni_session(
                 ui.race_rom_warning()
                 ui.set_title("Janker Door Tracker -Auto-tracking Disabled")
                 break
+
+            # Only in game: with no game running the bytes read are not a seed's
+            ui.seed_seen(data["seed_hash"])
 
             # if args.darkpos:
             #     is_dark = False

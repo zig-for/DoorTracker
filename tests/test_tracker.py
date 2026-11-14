@@ -34,6 +34,7 @@ def reading(tile, x, y, lamp=True, transitioning=False, indoors=True):
 
     return {
         "race": "00",
+        "seed_hash": "0102030405",
         "gamemode": "07",
         "indoors": "01" if indoors else "00",
         "link_y": coordinate(tile[1], y),
