@@ -343,6 +343,8 @@ class ReachItem(QGraphicsItem):
         super().__init__()
         self.page = page
         self.shapes = []
+        self.outlines: list[QPainterPath] = []  # of the push between rooms, one per shape
+        self._merged: dict[tuple, QPainterPath] = {}  # see _outline
         self.bounds = QRectF()
         self.setZValue(0.5)
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -350,6 +352,7 @@ class ReachItem(QGraphicsItem):
     def refresh(self):
         self.prepareGeometryChange()
         self.shapes = self.page.model.repulsion_shapes()
+        self.outlines = [self._outline(shape) for shape in self.shapes]
         bounds = QRectF()
         for shape in self.shapes:
             for left, top, right, bottom in shape.boxes:
@@ -367,21 +370,29 @@ class ReachItem(QGraphicsItem):
     def shape(self):
         return QPainterPath()
 
-    @staticmethod
-    def _grown(boxes, reach: float) -> QPainterPath:
-        """Rooms grown by half a reach. Rounded, as the solver measures the gap between two rooms."""
-        half = reach / 2
-        path = QPainterPath()
-        path.setFillRule(Qt.FillRule.WindingFill)
-        for left, top, right, bottom in boxes:
-            path.addRoundedRect(QRectF(left - half, top - half, right - left + reach, bottom - top + reach), half, half)
-        return path.simplified()
+    def _outline(self, shape) -> QPainterPath:
+        """A block's rooms grown by half the push's reach. Rounded, as the solver measures the gap between two rooms.
+
+        Merging the rooms into one outline is slow, and a block keeps its shape as it moves: each shape is
+        merged once and after that only moved.
+        """
+        x0, y0 = shape.boxes[0][:2]
+        boxes = tuple((round(left - x0, 2), round(top - y0, 2), round(right - x0, 2), round(bottom - y0, 2)) for left, top, right, bottom in shape.boxes)
+        merged = self._merged.get((shape.contact, boxes))
+        if merged is None:
+            reach, half = shape.contact, shape.contact / 2
+            path = QPainterPath()
+            path.setFillRule(Qt.FillRule.WindingFill)
+            for left, top, right, bottom in boxes:
+                path.addRoundedRect(QRectF(left - half, top - half, right - left + reach, bottom - top + reach), half, half)
+            merged = self._merged[shape.contact, boxes] = path.simplified()
+        return merged.translated(x0, y0)
 
     def paint(self, painter, option, widget=None):
         stiff = QPen(QColor(255, 200, 90, 230), 0)
         soft = QPen(QColor(255, 255, 255, 200), 0, Qt.PenStyle.DashLine)
         faint = QPen(QColor(255, 255, 255, 110), 0, Qt.PenStyle.DotLine)
-        for shape in self.shapes:
+        for shape, outline in zip(self.shapes, self.outlines):
             fill = QBrush(QColor(255, 255, 255, 110), Qt.BrushStyle.BDiagPattern) if shape.fixed else QBrush(QColor(255, 255, 255, 28))
             if shape.circle:
                 x, y, radius = shape.circle
@@ -395,7 +406,7 @@ class ReachItem(QGraphicsItem):
             else:
                 painter.setBrush(fill)
             painter.setPen(stiff)
-            painter.drawPath(self._grown(shape.boxes, shape.contact))
+            painter.drawPath(outline)
 
 
 class DoorsItem(QGraphicsItem):
