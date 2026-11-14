@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from PIL import Image
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
+    QBrush,
     QColor,
     QFont,
     QFontMetricsF,
@@ -331,7 +332,12 @@ class LabelItem(QGraphicsItem):
 
 
 class ReachItem(QGraphicsItem):
-    """Debug overlay of repulsion shapes. Dashed outline = shape grown by half the reach; overlap means repulsion."""
+    """Debug overlay of what pushes blocks apart.
+
+    Each outline is a shape grown by half a reach, so two blocks push when the same kind of outline overlaps.
+    Solid: the push between rooms. Dashed: the push between circles, when repelling by circle.
+    Hatched: a pinned or held block, which pushes but is not moved.
+    """
 
     def __init__(self, page: GraphPage):
         super().__init__()
@@ -351,7 +357,7 @@ class ReachItem(QGraphicsItem):
             if shape.circle:
                 x, y, radius = shape.circle
                 bounds = bounds.united(QRectF(x - radius, y - radius, radius * 2, radius * 2))
-        reach = max((shape.reach for shape in self.shapes), default=0.0)
+        reach = max((max(shape.reach, shape.contact) for shape in self.shapes), default=0.0)
         self.bounds = bounds.adjusted(-reach, -reach, reach, reach)
         self.update()
 
@@ -361,29 +367,35 @@ class ReachItem(QGraphicsItem):
     def shape(self):
         return QPainterPath()
 
+    @staticmethod
+    def _grown(boxes, reach: float) -> QPainterPath:
+        """Rooms grown by half a reach. Rounded, as the solver measures the gap between two rooms."""
+        half = reach / 2
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.WindingFill)
+        for left, top, right, bottom in boxes:
+            path.addRoundedRect(QRectF(left - half, top - half, right - left + reach, bottom - top + reach), half, half)
+        return path.simplified()
+
     def paint(self, painter, option, widget=None):
-        solid = QPen(QColor(255, 255, 255, 200), 0)
-        dashed = QPen(QColor(255, 255, 255, 200), 0, Qt.PenStyle.DashLine)
-        fill = QColor(255, 255, 255, 28)
+        stiff = QPen(QColor(255, 200, 90, 230), 0)
+        soft = QPen(QColor(255, 255, 255, 200), 0, Qt.PenStyle.DashLine)
+        faint = QPen(QColor(255, 255, 255, 110), 0, Qt.PenStyle.DotLine)
         for shape in self.shapes:
-            reach, half = shape.reach, shape.reach / 2
+            fill = QBrush(QColor(255, 255, 255, 110), Qt.BrushStyle.BDiagPattern) if shape.fixed else QBrush(QColor(255, 255, 255, 28))
             if shape.circle:
                 x, y, radius = shape.circle
                 painter.setBrush(fill)
-                painter.setPen(dashed)
-                painter.drawEllipse(QPointF(x, y), radius + half, radius + half)
+                painter.setPen(soft)
+                painter.drawEllipse(QPointF(x, y), radius + shape.reach / 2, radius + shape.reach / 2)
+                # The circle itself
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(solid)
+                painter.setPen(faint)
                 painter.drawEllipse(QPointF(x, y), radius, radius)
             else:
-                # Rooms grown by half the reach
-                grown = QPainterPath()
-                grown.setFillRule(Qt.FillRule.WindingFill)
-                for left, top, right, bottom in shape.boxes:
-                    grown.addRoundedRect(QRectF(left - half, top - half, right - left + reach, bottom - top + reach), half, half)
                 painter.setBrush(fill)
-                painter.setPen(dashed)
-                painter.drawPath(grown.simplified())
+            painter.setPen(stiff)
+            painter.drawPath(self._grown(shape.boxes, shape.contact))
 
 
 class DoorsItem(QGraphicsItem):
@@ -913,8 +925,7 @@ class GraphPage(QWidget):
         if links:
             for link in self._links:
                 link.update_path()
-        if self._reach is not None and self._reach.isVisible():
-            self._reach.refresh()
+        self._refresh_reach()
         if self._rubber is not None and self.selected_door:
             line = self._rubber.line()
             start = model.port(self.selected_door)
@@ -1239,6 +1250,7 @@ class GraphPage(QWidget):
             if member in self._rooms:
                 self._rooms[member].pinned = pinned
                 self._rooms[member].update()
+        self._refresh_reach()
         self.top.map_changed()
 
     def unpin_all(self):
@@ -1246,7 +1258,12 @@ class GraphPage(QWidget):
         for room in self._rooms.values():
             room.pinned = False
             room.update()
+        self._refresh_reach()
         self.top.map_changed()
+
+    def _refresh_reach(self):
+        if self._reach is not None and self._reach.isVisible():
+            self._reach.refresh()
 
     def remove_tile(self, tile: Tile) -> None:
         # Also removes its links, lobbies and icons: confirm first

@@ -312,6 +312,8 @@ class MainWindow(QMainWindow):
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(low, high)
             slider.setValue(round(self.settings[name] * steps_per_unit))
+            # A saved value outside the range is brought into it
+            self.settings[name] = slider.value() / steps_per_unit
             slider.setFixedWidth(width)
             slider.valueChanged.connect(lambda value: self.set_option(name, value / steps_per_unit))
             row.addWidget(QLabel(label))
@@ -325,7 +327,10 @@ class MainWindow(QMainWindow):
         add_box(
             "show_repulsion",
             "Show repulsion",
-            "Draw what each block repels as. Blocks push each other when their dashed outlines overlap",
+            "Draw what pushes blocks apart. Two blocks push when the same kind of outline overlaps.\n"
+            "Solid: the push between rooms, which reaches as far as the Spacing slider says.\n"
+            "With Circle repulsion the dashed circles carry the slider's reach, and the rooms only push at close range.\n"
+            "Hatched: a pinned block, which pushes but is not moved.",
         )
         add_box("simulate", "Simulate")
         add_box("follow_player", "Follow player")

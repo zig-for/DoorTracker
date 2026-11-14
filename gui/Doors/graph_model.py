@@ -25,7 +25,7 @@ from data.doors_data import (
 )
 from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
-from gui.Doors.layout import CONTACT_RANGE, LINK_GAP, REPEL_RANGE, enclosing_circle
+from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
@@ -116,7 +116,9 @@ class RepulsionShape:
 
     circle: layout.Circle | None  # None when repelling wall to wall
     boxes: list[Box]  # its rooms
-    reach: float
+    reach: float  # of the push between circles, when there is one
+    contact: float  # reach of the push between rooms
+    fixed: bool  # pinned or held: it pushes other blocks but is not moved
 
 
 @dataclass
@@ -1019,7 +1021,7 @@ class GraphModel:
         )
 
     def _layout(self, full: bool = False) -> None:
-        gap = LINK_GAP
+        gap = layout.link_gap(self.spacing)
         nodes = self.nodes()
         if not nodes:
             return
@@ -1137,7 +1139,9 @@ class GraphModel:
             if self.circle_repulsion:
                 corners = [(bx, by) for left, top, right, bottom in boxes for bx in (left, right) for by in (top, bottom)]
                 circle = enclosing_circle(corners)
-            shapes.append(RepulsionShape(circle, boxes, self.spacing if circle else max(self.spacing, CONTACT_RANGE)))
+            fixed = any(m in self.fixed or m in self.held for m in members)
+            contact = layout.contact_range(self.spacing, self.circle_repulsion)
+            shapes.append(RepulsionShape(circle, boxes, self.spacing, contact, fixed))
         return shapes
 
     def _park_unlinked(self, edges: list[Edge]) -> None:

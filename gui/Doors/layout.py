@@ -10,13 +10,13 @@ Circle = tuple[float, float, float]  # centre x, centre y, radius
 Rect = tuple[float, float, float, float]  # centre x, centre y, half width, half height
 Box = tuple[float, float, float, float]  # left, top, right, bottom
 
-LINK_GAP = 46  # preferred door-to-door distance of a link
+LINK_GAP = 46  # preferred door-to-door distance of a link; see link_gap
 MIN_GAP = 14  # minimum block spacing during layout search
-CONTACT_RANGE = 44  # stiff repulsion inside this distance
-CONTACT_STRENGTH = 0.5
+CONTACT_RANGE = 44  # reach of the push between rooms when repelling by circle; see contact_range
+CONTACT_STRENGTH = 0.5  # of the push between rooms: fraction of the shortfall corrected per step
 HARD_GAP = 4  # minimum spacing while settling
-REPEL_RANGE = 60  # default repulsion reach (Spacing slider)
-REPEL_STRENGTH = 0.12  # fraction of the shortfall corrected per step
+REPEL_RANGE = 50  # default repulsion reach (Spacing slider)
+REPEL_STRENGTH = 0.12  # of the push between circles: fraction of the shortfall corrected per step
 LINK_PULL_MAX = 10  # stretch at which link pull stops growing linearly
 
 
@@ -89,6 +89,19 @@ def enclosing_circle(points: Iterable[Point]) -> Circle:
     return circle
 
 
+def link_gap(spacing: float) -> float:
+    """Door-to-door distance a link pulls towards. Shrinks with the Spacing slider once that is below it."""
+    return min(LINK_GAP, spacing)
+
+
+def contact_range(spacing: float, circles: bool = False) -> float:
+    """Reach of the stiff push between rooms: the Spacing slider's value.
+
+    When repelling by circle the circles carry the slider's reach, softly, and the rooms only push at close range.
+    """
+    return min(CONTACT_RANGE, spacing) if circles else spacing
+
+
 def link_offset(facing_a: Point | None, facing_b: Point | None, gap: float = LINK_GAP) -> Point | None:
     """Where door b should sit relative to door a, given the directions they face; None if neither has one."""
     if facing_a is not None and facing_b is not None:
@@ -118,8 +131,8 @@ def relax(
     Returns (xs, ys, total link length, mean movement per iteration).
     """
     # Where each spring wants port b relative to port a; None if neither door has a direction
-    wants = [link_offset(spring.facing_a, spring.facing_b) for spring in springs]
-    gap = LINK_GAP
+    gap = link_gap(spacing)
+    wants = [link_offset(spring.facing_a, spring.facing_b, gap) for spring in springs]
     n = len(bodies)
     start_x, start_y = xs[:], ys[:]
     damping = [body.damping for body in bodies]
@@ -148,7 +161,7 @@ def relax(
 
     margin_x = margin_y = HARD_GAP if cold else MIN_GAP
     reach = spacing
-    far = max(reach, CONTACT_RANGE)
+    contact = contact_range(spacing, circles)
 
     # One circle around each block, when repelling by circle
     rings: list[Circle] = []
@@ -160,8 +173,7 @@ def relax(
 
     def repulsion():
         """Push apart blocks closer than the reach."""
-        # Circle mode still uses wall-to-wall contact at close range
-        near = CONTACT_RANGE if circles else far
+        near = contact
         for a in range(n):
             ea = extents[a]
             for b in range(a + 1, n):
@@ -220,9 +232,7 @@ def relax(
                     continue
                 norm = math.hypot(ux, uy) or 1.0
                 # Applied per pair (Gauss-Seidel), which avoids overshoot in crowds
-                push = CONTACT_STRENGTH * max(0.0, CONTACT_RANGE - nearest)
-                if not circles:
-                    push += REPEL_STRENGTH * max(0.0, reach - nearest)
+                push = CONTACT_STRENGTH * max(0.0, contact - nearest)
                 xs[a] -= ux / norm * push * share_a
                 ys[a] -= uy / norm * push * share_a
                 xs[b] += ux / norm * push * share_b
@@ -476,7 +486,7 @@ def stress(
     Returns (xs, ys) of the origins.
     """
     n = len(boxes)
-    gap = LINK_GAP + spacing * 0.5
+    gap = link_gap(spacing) + spacing * 0.5
     centre = [((left + right) / 2, (top + bottom) / 2) for left, top, right, bottom in boxes]
     half = [((right - left) / 2, (bottom - top) / 2) for left, top, right, bottom in boxes]
     size = [(w + h) / 2 for w, h in half]
