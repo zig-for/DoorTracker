@@ -1,7 +1,16 @@
 from data.worlds_data import World
 from collections import defaultdict
-from types import MappingProxyType
-from typing import Union, List, Tuple, Dict, DefaultDict
+from typing import List, Tuple, Dict, TypedDict
+
+
+class DoorEntry(TypedDict):
+    """Where a door is in its supertile's 512x512 picture."""
+
+    x: int
+    y: int
+    loc_type: str
+    button: int
+    name: str
 
 
 def add_manual_drop(source, source_eg_tile, dest_eg_tile, dest_region=None):
@@ -47,7 +56,7 @@ dark_tiles = {
     (10, 11),
     (11, 0),
 }
-door_coordinates: DefaultDict[Tuple[int, int], List[dict[str, Union[str, int]]]] = defaultdict(list)
+door_coordinates: Dict[Tuple[int, int], List[DoorEntry]] = {}
 
 door_coordinates.update(
     {
@@ -9543,6 +9552,3 @@ simple_tiles = {
     (0, 13),
     (0, 14),
 }
-
-# Read-only from here: a defaultdict would insert a key on every missed lookup
-door_coordinates = MappingProxyType(dict(door_coordinates))
