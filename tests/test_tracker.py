@@ -149,6 +149,17 @@ def test_walking_through_a_door_and_into_a_dark_room(window, app, monkeypatch):
     assert seen["end"] == {**seen["end"], "player": DARK_ROOM, "dark room lit": True, "dark room hidden": False}
 
 
+def test_the_tracker_stops_when_the_window_says_to_disconnect(window, app, monkeypatch):
+    monkeypatch.setattr(window, "seed_seen", lambda seed_hash: False)
+    tile, door = door_facing("No")
+    seen = play(window, app, monkeypatch, [(f"reading {k}", reading(tile, door["x"], door["y"])) for k in range(3)])
+
+    # It stopped at the first reading, before putting the player on the map
+    assert list(seen) == ["reading 0"]
+    assert window.pages[TAB].model.player is None
+    assert "disconnected" in window.windowTitle()
+
+
 def supertile_with_doors_facing(*facings):
     """(supertile, door table entry by facing) of a lit Palace of Darkness supertile with a door facing each way."""
     for tile, entries in sorted(door_coordinates.items()):

@@ -197,6 +197,11 @@ class GraphModel:
 
     # ------------------------------------------------------------------ changes
 
+    def untouched(self) -> bool:
+        """Whether nothing has been tracked or added since reset(). A reset map already has its drop entrances."""
+        fresh = GraphModel(self.tab_world, self.experimental_flags)
+        return not self.door_links and self.special_doors == fresh.special_doors and set(self.tiles) == set(fresh.tiles)
+
     def update(self) -> None:
         """Rebuild blocks and lay out new nodes. Call after any data change."""
         self._sync_model()

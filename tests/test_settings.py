@@ -8,7 +8,9 @@ import DoorsTracker
 TAB = "Turtle_Rock"
 
 
-@pytest.mark.parametrize("text", ["split_rooms: [not closed", "", "split_rooms: false\nsimulate: sometimes\n", "window: zz\n"])
+@pytest.mark.parametrize(
+    "text", ["split_rooms: [not closed", "", "split_rooms: false\nsimulate: sometimes\n", "spacing: .nan\n", "spacing: .inf\n", "window: zz\n"]
+)
 def test_a_settings_file_that_cannot_be_used_is_reported_and_the_defaults_used(open_window, tmp_path, monkeypatch, text):
     file = tmp_path / "settings.yaml"
     file.write_text(text)
@@ -20,6 +22,14 @@ def test_a_settings_file_that_cannot_be_used_is_reported_and_the_defaults_used(o
     # Hex that is no window geometry is not an error: the window takes its usual size
     assert len(warnings) == (0 if text.startswith("window") else 1)
     assert window.height() == DoorsTracker.WINDOW_SIZES["medium"][1]
+
+
+def test_a_slider_value_outside_its_range_is_brought_into_it(open_window, tmp_path):
+    file = tmp_path / "settings.yaml"
+    file.write_text("spacing: 1.0e+300\ndead_end_pull: -7\n")
+    window = open_window(file)
+    assert (window.settings["spacing"], window.settings["dead_end_pull"]) == (200.0, 1.0)
+    assert {(page.model.spacing, page.model.leaf_pull) for page in window.pages.values()} == {(200.0, 1.0)}
 
 
 def test_options_changed_in_one_window_are_set_in_the_next(open_window, tmp_path):

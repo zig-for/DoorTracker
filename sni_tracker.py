@@ -113,6 +113,7 @@ class TrackerUI(Protocol):
     """What the tracker needs from the window."""
 
     device: str | None
+    connected: bool  # reading from a device through SNI
 
     @property
     def pages(self) -> Mapping[str, TrackerPage]: ...  # by dungeon name
@@ -123,7 +124,7 @@ class TrackerUI(Protocol):
 
     def race_rom_warning(self) -> None: ...
 
-    def seed_seen(self, seed_hash: str) -> None: ...
+    def seed_seen(self, seed_hash: str) -> bool: ...  # False to stop tracking
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -146,6 +147,7 @@ async def sni_probe(ui: TrackerUI, args: argparse.Namespace, forced_autotrack: b
                 last_error = details
             ui.set_title(f"Janker Door Tracker -Reconnecting... ({details.split(chr(59))[0][:70]})")
         finally:
+            ui.connected = False
             await channel.close()
         await asyncio.sleep(RETRY_SECONDS)
 
@@ -181,6 +183,7 @@ async def _sni_session(
     mem_mapping = mem_mapping.memoryMapping
     mem_request = build_multi_request(dev_addrspace, mem_mapping)
     mem_request_names = list(mem_request.keys())
+    ui.connected = True
 
     if not forced_autotrack:
         ui.set_title(f"Janker Door Tracker -Auto-tracking Enabled (Connected to {dev_uri})")
@@ -240,7 +243,9 @@ async def _sni_session(
 
             # Only in game: with no game running the bytes read are not a seed's.
             # Before the race check, so a race seed gets its own map even though it is not tracked
-            ui.seed_seen(data["seed_hash"])
+            if not ui.seed_seen(data["seed_hash"]):
+                ui.set_title("Janker Door Tracker -Auto-tracking stopped: disconnected to leave the map as it is")
+                break
 
             if data["race"] == "01" and not forced_autotrack:
                 ui.race_rom_warning()

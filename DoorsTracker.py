@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import math
 import signal
 import sys
 import traceback
@@ -11,7 +12,7 @@ from typing import Any
 import yaml
 from PIL import Image
 from PySide6.QtCore import QByteArray, QSize, QStandardPaths, Qt, QTimer
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -46,6 +47,8 @@ SAVE_DELAY = 1000
 DRIFT_SAVE_DELAY = 10_000
 # Holds the name of the autosave written last
 LATEST = "latest.txt"
+# Answers to the questions asked about a map
+NEW_MAP, KEEP_MAP, USE_SAVED, DISCONNECT, CANCEL = "Start a new map", "Keep this map", "Use the saved map", "Disconnect", "Cancel"
 # What is kept between launches, and its value on a first launch. A saved setting not listed here is ignored
 DEFAULT_SETTINGS: dict[str, Any] = {
     "autosave": True,
@@ -84,7 +87,8 @@ def read_settings(file: Path) -> dict[str, Any]:
         if isinstance(default, bool):
             right_kind = isinstance(value, bool)
         elif isinstance(default, float):
-            right_kind = isinstance(value, (int, float)) and not isinstance(value, bool)
+            # yaml also reads .nan and .inf as numbers
+            right_kind = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
         else:
             # A setting with no default is text, once it has a value
             right_kind = value is None or isinstance(value, str)
@@ -227,6 +231,8 @@ class MainWindow(QMainWindow):
         if not (geometry and self.restoreGeometry(QByteArray.fromHex(geometry.encode()))):
             self.resize(*WINDOW_SIZES[args.size or "medium"])
         self.device: str | None = None
+        self.connected = False  # the auto-tracker is reading from a device
+        self._adopt_seed = False  # see new_map
         self.sni_task: asyncio.Task | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
 
@@ -259,8 +265,9 @@ class MainWindow(QMainWindow):
     def _build_menus(self):
         bar = self.menuBar()
         file_menu = bar.addMenu("File")
-        file_menu.addAction("Load Tracker Data", lambda: self.load_file())
-        file_menu.addAction("Save Tracker Data", self.save_file)
+        file_menu.addAction("New", self.new_map).setShortcut(QKeySequence.StandardKey.New)
+        file_menu.addAction("Open Tracker Data", lambda: self.load_file()).setShortcut(QKeySequence.StandardKey.Open)
+        file_menu.addAction("Save Tracker Data", self.save_file).setShortcut(QKeySequence.StandardKey.Save)
         self.autosave_action = QAction("Autosave", self, checkable=True)
         self.autosave_action.setChecked(self.autosave_on)
         self.autosave_action.toggled.connect(self._set_autosave)
@@ -270,8 +277,6 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Reconnect to SNI", lambda: self.start_tracking())
         self.devices_menu = file_menu.addMenu("Devices")
         self.set_devices([])
-        file_menu.addSeparator()
-        file_menu.addAction("Reset Tracker", self.reset_tracker)
         file_menu.addSeparator()
         file_menu.addAction("Exit", self.close)
 
@@ -313,8 +318,8 @@ class MainWindow(QMainWindow):
         def add_slider(name: str, label: str, low: int, high: int, width: int, steps_per_unit: int) -> None:
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(low, high)
-            slider.setValue(round(self.settings[name] * steps_per_unit))
             # A saved value outside the range is brought into it
+            slider.setValue(round(min(max(self.settings[name] * steps_per_unit, low), high)))
             self.settings[name] = slider.value() / steps_per_unit
             slider.setFixedWidth(width)
             slider.valueChanged.connect(lambda value: self.set_option(name, value / steps_per_unit))
@@ -379,7 +384,7 @@ class MainWindow(QMainWindow):
 
     def load_file(self, file: str | None = None) -> None:
         if file is None:
-            file, _ = QFileDialog.getOpenFileName(self, "Load Tracker Data", ".", "Yaml Files (*.yaml *.yml);;All Files (*)")
+            file, _ = QFileDialog.getOpenFileName(self, "Open Tracker Data", ".", "Yaml Files (*.yaml *.yml);;All Files (*)")
         if not file:
             return
         with open(file, mode="r") as fh:
@@ -399,6 +404,7 @@ class MainWindow(QMainWindow):
         if "Agahnims_Tower" in data:
             data["Castle_Tower"] = data.pop("Agahnims_Tower")
         self.seed_hash = data.pop("seed_hash", None)
+        self._adopt_seed = False
         # A spoiler lists lobbies apart from the dungeons: file each under the dungeon that owns it
         for lobby, door in (data.pop("lobbies", None) or {}).items():
             if not isinstance(door, str):
@@ -443,8 +449,16 @@ class MainWindow(QMainWindow):
         """
         latest = folder / LATEST
         if restore and self.autosave_on and latest.exists():
-            self._latest = latest.read_text().strip()
-            self._load_autosave(folder / self._latest)
+            try:
+                self._latest = latest.read_text().strip()
+            except (OSError, ValueError) as error:  # not readable, or not text
+                self._stop_autosave(
+                    "Autosave not loaded",
+                    f"{latest}\n\n{error!r}\n\nThe saved maps have been left as they are, and File -> Autosave has "
+                    "been turned off.",
+                )
+            else:
+                self._load_autosave(folder / self._latest)
         self.autosave = folder
         if not restore:
             self.map_changed()
@@ -512,30 +526,123 @@ class MainWindow(QMainWindow):
             return False
         return True
 
-    def seed_seen(self, seed_hash: str) -> None:
-        """The auto-tracker is in a game with this hash. Each seed has its own autosave: a new seed swaps maps."""
+    def seed_seen(self, seed_hash: str) -> bool:
+        """The auto-tracker is in a game with this hash. Each seed has its own autosave: a new seed swaps maps.
+
+        Returns False if the user chose to disconnect and leave the map as it is: tracking must stop.
+
+        The map on screen is only given another seed's hash once it has been swapped for that seed's map, or
+        the user has said what to do with it. Otherwise one seed's map could be saved over another's.
+        """
         if seed_hash == self.seed_hash:
-            return
-        # The map on screen is another seed's: put it away and bring out this one's. Not if it cannot be put away
-        if self.seed_hash is not None and self.autosave is not None and self._write_autosave():
-            file = self.autosave / autosave_name(seed_hash)
-            if not (file.exists() and self._load_autosave(file)):
-                for page in self.pages.values():
-                    page.init_page()
+            return True
+        saved = self.autosave / autosave_name(seed_hash) if self.autosave is not None and self.autosave_on else None
+        if self.seed_hash is None:
+            adopt, self._adopt_seed = self._adopt_seed, False
+            # The map on screen has not been seen in a game. It is this seed's, unless this seed has a map already
+            if saved is not None and saved.exists() and not adopt:
+                answer = self._ask(
+                    "Saved map found",
+                    "This seed already has a saved map.\n\nKeeping the map on screen will save it over that one.\n"
+                    "Disconnecting leaves both maps as they are.",
+                    USE_SAVED,
+                    KEEP_MAP,
+                    DISCONNECT,
+                )
+                if answer == DISCONNECT:
+                    return False
+                if answer == USE_SAVED:
+                    self._swap_to(saved)
+        elif not self._swap_to(saved):
+            answer = self._ask(
+                "Different seed",
+                "The game is a different seed from this map, and the map could not be put away in its autosave.\n\n"
+                "Keeping it will add the new seed's rooms to it.\nDisconnecting leaves it as it is.",
+                NEW_MAP,
+                KEEP_MAP,
+                DISCONNECT,
+            )
+            if answer == DISCONNECT:
+                return False
+            if answer == NEW_MAP:
+                self._clear_map()
         self.seed_hash = seed_hash
         self.map_changed()
+        return True
 
-    def reset_tracker(self):
-        answer = QMessageBox.question(
-            self,
-            "Reset?",
-            "This will reset your tracker, losing all connections etc.\nAre you sure you want to continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
-            for page in self.pages.values():
-                page.init_page()
+    def _swap_to(self, saved: Path | None) -> bool:
+        """Put the map on screen away in its autosave and show the saved one, or an empty map if there is none.
+
+        saved: the autosave to show, or None if autosave is off. False if the map on screen could not be put
+        away: it is then left on screen.
+        """
+        if saved is None or not self._write_autosave():
+            return False
+        if not (saved.exists() and self._load_autosave(saved)):
+            self._clear_map()
+        return True
+
+    def _ask(self, title: str, text: str, *answers: str, warning: bool = False) -> str:
+        """Ask a question with named answers; returns the one picked. Closing the dialog picks the last.
+
+        warning: the text is html, and the last answer is the default.
+        """
+        box = QMessageBox(QMessageBox.Icon.Warning if warning else QMessageBox.Icon.Question, title, text, parent=self)
+        buttons = {box.addButton(answer, QMessageBox.ButtonRole.ActionRole): answer for answer in answers}
+        last = list(buttons)[-1]
+        box.setEscapeButton(last)
+        if warning:
+            box.setTextFormat(Qt.TextFormat.RichText)
+            box.setDefaultButton(last)
+        box.exec()
+        return buttons.get(box.clickedButton(), answers[-1])
+
+    def _clear_map(self) -> None:
+        for page in self.pages.values():
+            page.init_page()
+
+    def new_map(self) -> None:
+        """File -> New: an empty map that belongs to no seed."""
+        if self.connected:
+            answer = self._ask(
+                "Connected to a game",
+                "<h1>YOU ARE CONNECTED TO A GAME</h1>"
+                "<p style='font-size: 13pt'>The new map will be attached to that game's seed as soon as the tracker "
+                "next reads it, and will <b>REPLACE THE MAP SAVED FOR THAT SEED</b>.</p>"
+                "<p style='font-size: 13pt'>That map cannot be brought back.</p>",
+                NEW_MAP,
+                CANCEL,
+                warning=True,
+            )
+            if answer != NEW_MAP:
+                return
+            # Chosen knowing that: the new map takes the game's seed without a second question
+            self._adopt_seed = True
+        elif not all(page.model.untouched() for page in self.pages.values()):
+            # Not connected. A map with a seed stays in that seed's autosave; any other has nowhere to go
+            kept = self.seed_hash is not None and self.autosave is not None and self.autosave_on
+            if not kept:
+                answer = self._ask(
+                    "Start a new map?",
+                    "<p>The map on screen will be discarded.</p><p>"
+                    + (
+                        "It belongs to no seed, so the new map takes its place in the autosave."
+                        if self.seed_hash is None
+                        else "Autosave is off, so it is not saved anywhere."
+                    )
+                    + "</p>",
+                    NEW_MAP,
+                    CANCEL,
+                    warning=True,
+                )
+                if answer != NEW_MAP:
+                    return
+        if self._save_timer.isActive():
+            # The map on screen goes to its own autosave first
+            self._write_autosave()
+        self._clear_map()
+        self.seed_hash = None
+        self.map_changed()
 
     # ------------------------------------------------------------------ pickers
 
@@ -609,6 +716,7 @@ class MainWindow(QMainWindow):
         if self.sni_task is not None:
             self.sni_task.cancel()
             self.sni_task = None
+            self.connected = False
             self.setWindowTitle(f"{TITLE} - Auto-tracking disabled")
 
     def _pump_asyncio(self):
