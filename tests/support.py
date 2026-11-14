@@ -14,7 +14,7 @@ def new_model(tab="Turtle_Rock", **flags):
         "prefer_fill_map": False,
         "decoupled_doors": False,
         "vanilla_drops": True,
-        "hide_dead_rooms": True,
+        "trim_rooms": True,
         "split_rooms": True,
     }
     settings.update(flags)

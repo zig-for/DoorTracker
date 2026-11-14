@@ -191,7 +191,7 @@ class RoomItem(QGraphicsItem):
         self.outline = self._around(self.pieces, 0)
         self.player_outline = self._around(self.pieces, 3)
         self.w, self.h = self.box[2] - self.box[0], self.box[3] - self.box[1]
-        self.blank_dead = bool(model.experimental_flags.get("hide_dead_rooms"))
+        self.blank_dead = bool(model.experimental_flags.get("trim_rooms"))
         self.colour = QColor(dungeon_colour(supertile(node.tile).dungeon))
         self.hidden = model.is_hidden_dark(node.tile)
         self.compact = node in model.compact

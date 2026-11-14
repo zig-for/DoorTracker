@@ -141,7 +141,7 @@ async def sni_probe(ui: TrackerUI, args: argparse.Namespace, forced_autotrack: b
             if details != last_error:
                 print(f"Auto-tracking lost its connection: {details}")
                 last_error = details
-            ui.set_title(f"Jank Door Tracker - Reconnecting... ({details.split(chr(59))[0][:70]})")
+            ui.set_title(f"Janker Door Tracker -Reconnecting... ({details.split(chr(59))[0][:70]})")
         finally:
             await channel.close()
         await asyncio.sleep(RETRY_SECONDS)
@@ -161,7 +161,7 @@ async def _sni_session(
         if len(response.devices) > 0:
             break
         else:
-            ui.set_title("Jank Door Tracker - Waiting for devices...")
+            ui.set_title("Janker Door Tracker -Waiting for devices...")
             await asyncio.sleep(1)
     ui.set_devices([_device.uri for _device in response.devices])
 
@@ -180,10 +180,10 @@ async def _sni_session(
     mem_request_names = list(mem_request.keys())
 
     if not forced_autotrack:
-        ui.set_title(f"Jank Door Tracker - Auto-tracking Enabled (Connected to {dev_uri})")
+        ui.set_title(f"Janker Door Tracker -Auto-tracking Enabled (Connected to {dev_uri})")
     else:
         ui.set_title(
-            f"Jank Door Tracker - Auto-tracking Forced (!! Race Rom Detected !!) (Connected to {dev_uri})"
+            f"Janker Door Tracker -Auto-tracking Forced (!! Race Rom Detected !!) (Connected to {dev_uri})"
         )
 
     current_tile = None
@@ -237,7 +237,7 @@ async def _sni_session(
 
             if data["race"] == "01" and not forced_autotrack:
                 ui.race_rom_warning()
-                ui.set_title("Jank Door Tracker - Auto-tracking Disabled")
+                ui.set_title("Janker Door Tracker -Auto-tracking Disabled")
                 break
 
             # if args.darkpos:

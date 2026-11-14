@@ -770,7 +770,7 @@ class GraphModel:
             return [(-COMPACT_W / 2, -COMPACT_H / 2, COMPACT_W / 2, COMPACT_H / 2)]
         half = THUMB / 2
         live = supertile(node.tile).live
-        if not live or not self.experimental_flags.get("hide_dead_rooms") or self.is_hidden_dark(node.tile):
+        if not live or not self.experimental_flags.get("trim_rooms") or self.is_hidden_dark(node.tile):
             return [(-half, -half, half, half)]
         # Auto-detected rooms are on an 8px grid and get a margin; hand-set areas are exact
         found = {tuple(b) for b in live}
@@ -841,7 +841,7 @@ class GraphModel:
         fbx, fby = door_fraction(b)
         # Walls of the pieces the doors are on, not the supertile edges
         pa, pb = self._piece_at(a), self._piece_at(b)
-        gap = JOIN_GAP if self.experimental_flags.get("hide_dead_rooms") else 0.0
+        gap = JOIN_GAP if self.experimental_flags.get("trim_rooms") else 0.0
         if da[0] == 0:
             across = round((fax - fbx) * THUMB / SNAP) * SNAP
             return across, (pa[1] - pb[3] - gap) if da[1] < 0 else (pa[3] - pb[1] + gap)

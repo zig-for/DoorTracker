@@ -1,4 +1,4 @@
-"""Jank Door Tracker: auto-tracks ALttP door randomizer dungeon layouts through SNI. Qt entry point."""
+"""Janker Door Tracker: auto-tracks ALttP door randomizer dungeon layouts through SNI. Qt entry point."""
 
 import argparse
 import asyncio
@@ -32,7 +32,7 @@ from gui.Doors import rooms
 from gui.qt.graph_page import Assets, GraphPage
 
 WINDOW_SIZES = {"small": (1064, 632), "medium": (1588, 888), "large": (2088, 1144)}
-TITLE = "Jank Door Tracker"
+TITLE = "Janker Door Tracker"
 
 
 class IconPicker(QDialog):
@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
             "prefer_fill_map": False,
             "decoupled_doors": False,
             "vanilla_drops": True,
-            "hide_dead_rooms": True,
+            "trim_rooms": True,
             "split_rooms": True,
         }
         self.device: str | None = None
@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
             ("Hide Single Route Tiles", "hide_single_route_tiles"),
             ("Enable Decoupled Support", "decoupled_doors"),
             ("Drops Are Not Shuffled", "vanilla_drops"),
-            ("Hide Dead Rooms", "hide_dead_rooms"),
+            ("Trim Rooms", "trim_rooms"),
             ("Split Partitioned Rooms", "split_rooms"),
         ):
             action = QAction(label, self, checkable=True)
@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
     def _set_flag(self, flag: str, checked: bool) -> None:
         self.experimental_flags[flag] = checked
         for page in self.pages.values():
-            if flag in ("hide_dead_rooms", "split_rooms"):
+            if flag in ("trim_rooms", "split_rooms"):
                 # These change block shapes or count
                 page.relayout()
             else:
