@@ -238,13 +238,14 @@ async def _sni_session(
                 await asyncio.sleep(0.1)
                 continue
 
+            # Only in game: with no game running the bytes read are not a seed's.
+            # Before the race check, so a race seed gets its own map even though it is not tracked
+            ui.seed_seen(data["seed_hash"])
+
             if data["race"] == "01" and not forced_autotrack:
                 ui.race_rom_warning()
                 ui.set_title("Janker Door Tracker -Auto-tracking Disabled")
                 break
-
-            # Only in game: with no game running the bytes read are not a seed's
-            ui.seed_seen(data["seed_hash"])
 
             # if args.darkpos:
             #     is_dark = False

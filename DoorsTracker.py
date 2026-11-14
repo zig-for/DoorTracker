@@ -14,11 +14,15 @@ from PySide6.QtCore import QByteArray, QSize, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QFileDialog,
     QGridLayout,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
+    QSlider,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -31,6 +35,7 @@ from data.vanilla_data import vanilla_layout_optimized
 from data.worlds_data import World, dungeon_worlds
 from gui import files
 from gui.Doors import rooms
+from gui.Doors.layout import REPEL_RANGE
 from gui.qt.graph_page import Assets, GraphPage
 
 WINDOW_SIZES = {"small": (1064, 632), "medium": (1588, 888), "large": (2088, 1144)}
@@ -54,14 +59,49 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "trim_rooms": True,
     "split_rooms": True,
     # Toolbar
-    "group_by_dungeon": False,
     "auto_join": True,
+    "spacing": float(REPEL_RANGE),
+    "dead_end_pull": 2.5,
     "circle_repulsion": False,
     "show_repulsion": False,
     "simulate": False,
     "follow_player": False,
     "labels": True,
 }
+
+
+def read_settings(file: Path) -> dict[str, Any]:
+    """The settings a file holds. Raises if it cannot be read as settings, or a value is of the wrong kind."""
+    saved = yaml.safe_load(file.read_text())
+    if not isinstance(saved, dict):
+        raise ValueError("not a list of settings")
+    settings = {}
+    for name, value in saved.items():
+        if name not in DEFAULT_SETTINGS:
+            continue
+        default = DEFAULT_SETTINGS[name]
+        if isinstance(default, bool):
+            right_kind = isinstance(value, bool)
+        elif isinstance(default, float):
+            right_kind = isinstance(value, (int, float)) and not isinstance(value, bool)
+        else:
+            # A setting with no default is text, once it has a value
+            right_kind = value is None or isinstance(value, str)
+        if not right_kind:
+            raise ValueError(f"{name}: {value!r}")
+        settings[name] = value
+    return settings
+
+
+def read_autosave(file: Path) -> dict[str, Any]:
+    """The map an autosave holds. Raises if the file is not a whole autosave."""
+    text = file.read_text()
+    if not text.endswith("...\n"):
+        raise ValueError("the file is cut short")
+    data = yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise ValueError("not a tracker file")
+    return data
 
 
 def autosave_name(seed_hash: str | None) -> str:
@@ -160,8 +200,16 @@ class MainWindow(QMainWindow):
         # Shared with every page's model
         self.settings: dict[str, Any] = dict(DEFAULT_SETTINGS)
         if settings_file is not None and settings_file.exists():
-            saved = yaml.safe_load(settings_file.read_text())
-            self.settings.update({name: value for name, value in saved.items() if name in DEFAULT_SETTINGS})
+            try:
+                self.settings.update(read_settings(settings_file))
+            except Exception as error:
+                traceback.print_exc()
+                QMessageBox.warning(
+                    self,
+                    "Settings not loaded",
+                    f"{settings_file}\n\n{error!r}\n\nThe default settings are used. The file is replaced the next "
+                    "time a setting changes, or when the tracker closes.",
+                )
         self.autosave: Path | None = None  # folder; see start_autosave
         self._latest: str | None = None  # autosave file the next launch loads, as LATEST says
         self.autosave_on: bool = self.settings["autosave"]  # File -> Autosave, for this run
@@ -173,9 +221,9 @@ class MainWindow(QMainWindow):
         self._drift_timer.setSingleShot(True)
         self._drift_timer.timeout.connect(self._write_autosave)
         self.setWindowTitle(TITLE)
-        if args.size is None and self.settings["window"]:
-            self.restoreGeometry(QByteArray.fromHex(self.settings["window"].encode()))
-        else:
+        geometry = None if args.size else self.settings["window"]
+        # restoreGeometry returns False for bytes that are not a geometry
+        if not (geometry and self.restoreGeometry(QByteArray.fromHex(geometry.encode()))):
             self.resize(*WINDOW_SIZES[args.size or "medium"])
         self.device: str | None = None
         self.sni_task: asyncio.Task | None = None
@@ -185,7 +233,14 @@ class MainWindow(QMainWindow):
         self.assets = Assets(Image.open(eg_map))
 
         self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
+        # The toolbar is above the tabs: what it sets is the same in every tab
+        central = QWidget()
+        column = QVBoxLayout(central)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        column.addWidget(self._build_toolbar())
+        column.addWidget(self.tabs, 1)
+        self.setCentralWidget(central)
         self.pages: dict[str, GraphPage] = {}  # by dungeon, in tab order
         for dungeon, world in dungeon_worlds.items():
             if dungeon in ("Overworld", "Underworld"):
@@ -236,13 +291,65 @@ class MainWindow(QMainWindow):
             action.toggled.connect(lambda checked, name=name: self.set_option(name, checked))
             menu.addAction(action)
 
+    def _build_toolbar(self) -> QWidget:
+        toolbar = QWidget()
+        row = QHBoxLayout(toolbar)
+        row.setContentsMargins(6, 3, 6, 3)
+
+        self.boxes: dict[str, QCheckBox] = {}  # by setting
+
+        def add_box(name: str, label: str, tip: str = "") -> None:
+            box = QCheckBox(label)
+            box.setToolTip(tip)
+            box.setChecked(self.settings[name])
+            box.toggled.connect(lambda checked: self.set_option(name, checked))
+            row.addWidget(box)
+            self.boxes[name] = box
+
+        self.sliders: dict[str, QSlider] = {}  # by setting
+
+        def add_slider(name: str, label: str, low: int, high: int, width: int, steps_per_unit: int) -> None:
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(low, high)
+            slider.setValue(round(self.settings[name] * steps_per_unit))
+            slider.setFixedWidth(width)
+            slider.valueChanged.connect(lambda value: self.set_option(name, value / steps_per_unit))
+            row.addWidget(QLabel(label))
+            row.addWidget(slider)
+            self.sliders[name] = slider
+
+        add_box("auto_join", "Join fitting rooms")
+        add_slider("spacing", "Spacing", 10, 200, 120, 1)
+        add_slider("dead_end_pull", "Dead-end pull", 10, 40, 80, 10)
+        add_box("circle_repulsion", "Circle repulsion", "Experiment: each block repels as one circle around all its rooms")
+        add_box(
+            "show_repulsion",
+            "Show repulsion",
+            "Draw what each block repels as. Blocks push each other when their dashed outlines overlap",
+        )
+        add_box("simulate", "Simulate")
+        add_box("follow_player", "Follow player")
+        add_box("labels", "Labels")
+        self.status = QLabel("")  # what the mouse is over
+        self.status.setMinimumWidth(50)
+        row.addWidget(self.status, 1)
+        return toolbar
+
     def set_setting(self, name: str, value: Any) -> None:
         """Change a setting and keep it for the next launch."""
         self.settings[name] = value
         if self.settings_file is not None:
-            files.write_text(self.settings_file, yaml.dump(self.settings))
+            try:
+                files.write_text(self.settings_file, yaml.dump(self.settings))
+            except OSError as error:
+                traceback.print_exc()
+                # Said once: no more writes are tried this run
+                file, self.settings_file = self.settings_file, None
+                QMessageBox.warning(
+                    self, "Settings not saved", f"{file}\n\n{error!r}\n\nSettings changed from now on are not kept."
+                )
 
-    def set_option(self, name: str, value: bool) -> None:
+    def set_option(self, name: str, value: bool | float) -> None:
         """Change a setting the pages act on, in every tab."""
         self.set_setting(name, value)
         for page in self.pages.values():
@@ -268,6 +375,13 @@ class MainWindow(QMainWindow):
                 from SpoilerToYaml import parse_dr_spoiler
 
                 data = parse_dr_spoiler(fh)
+        if self._save_timer.isActive():
+            # The map on screen is about to be replaced: its last changes go to its autosave first
+            self._write_autosave()
+        self.load_data(data)
+
+    def load_data(self, data: dict[str, Any]) -> None:
+        """Show the map a tracker file holds."""
         if "Agahnims_Tower" in data:
             data["Castle_Tower"] = data.pop("Agahnims_Tower")
         self.seed_hash = data.pop("seed_hash", None)
@@ -293,7 +407,11 @@ class MainWindow(QMainWindow):
             return
         if not file.endswith((".yaml", ".yml")):
             file += ".yaml"
-        files.write_text(Path(file), yaml.dump(self.tracker_data()))
+        try:
+            files.write_text(Path(file), yaml.dump(self.tracker_data()))
+        except OSError as error:
+            traceback.print_exc()
+            QMessageBox.warning(self, "Tracker data not saved", f"{file}\n\n{error!r}")
 
     def tracker_data(self) -> dict[str, Any]:
         """Everything a tracker file holds."""
@@ -311,26 +429,36 @@ class MainWindow(QMainWindow):
         """
         latest = folder / LATEST
         if restore and self.autosave_on and latest.exists():
-            self._latest = latest.read_text()
-            file = folder / self._latest
-            try:
-                self.load_file(str(file))
-            except Exception as error:
-                traceback.print_exc()
-                # Saving now would overwrite the file that failed to load. Off for this run only
-                self.autosave_on = False
-                self.autosave_action.blockSignals(True)
-                self.autosave_action.setChecked(False)
-                self.autosave_action.blockSignals(False)
-                QMessageBox.warning(
-                    self,
-                    "Autosave not loaded",
-                    f"{file}\n\n{error!r}\n\nThe file has been left as it is, and File -> Autosave has been "
-                    "turned off. Turning it on again will save over the file.",
-                )
+            self._latest = latest.read_text().strip()
+            self._load_autosave(folder / self._latest)
         self.autosave = folder
         if not restore:
             self.map_changed()
+
+    def _load_autosave(self, file: Path) -> bool:
+        """Show the map an autosave holds. False if it could not be read: the file is then left alone."""
+        try:
+            self.load_data(read_autosave(file))
+        except Exception as error:
+            # Saving now would overwrite the file that failed to load
+            self._stop_autosave(
+                "Autosave not loaded",
+                f"{file}\n\n{error!r}\n\nThe file has been left as it is, and File -> Autosave has been turned off. "
+                "Turning it on again will save over the file.",
+            )
+            return False
+        return True
+
+    def _stop_autosave(self, title: str, text: str) -> None:
+        """Turn autosave off after a failure, and say why. For this run only: the setting is kept."""
+        traceback.print_exc()
+        self.autosave_on = False
+        self._save_timer.stop()
+        self._drift_timer.stop()
+        self.autosave_action.blockSignals(True)
+        self.autosave_action.setChecked(False)
+        self.autosave_action.blockSignals(False)
+        QMessageBox.warning(self, title, text)
 
     def _set_autosave(self, checked: bool) -> None:
         self.autosave_on = checked
@@ -351,26 +479,33 @@ class MainWindow(QMainWindow):
         if self.settings["simulate"]:
             self._drift_timer.start(DRIFT_SAVE_DELAY)
 
-    def _write_autosave(self) -> None:
+    def _write_autosave(self) -> bool:
+        """Save the map to its seed's file. False if it was not saved: autosave is off, or the write failed."""
         if self.autosave is None or not self.autosave_on:
-            return
+            return False
         name = autosave_name(self.seed_hash)
-        files.write_text(self.autosave / name, yaml.dump(self.tracker_data()))
-        if name != self._latest:
-            files.write_text(self.autosave / LATEST, name)
-            self._latest = name
+        try:
+            # The end marker shows the file is whole when it is read back
+            files.write_text(self.autosave / name, yaml.dump(self.tracker_data(), explicit_end=True))
+            if name != self._latest:
+                files.write_text(self.autosave / LATEST, name)
+                self._latest = name
+        except OSError as error:
+            self._stop_autosave(
+                "Autosave failed",
+                f"{self.autosave / name}\n\n{error!r}\n\nFile -> Autosave has been turned off. Turn it on again to retry.",
+            )
+            return False
+        return True
 
     def seed_seen(self, seed_hash: str) -> None:
         """The auto-tracker is in a game with this hash. Each seed has its own autosave: a new seed swaps maps."""
         if seed_hash == self.seed_hash:
             return
-        if self.seed_hash is not None and self.autosave is not None and self.autosave_on:
-            # The map on screen is another seed's: put it away and bring out this one's
-            self._write_autosave()
+        # The map on screen is another seed's: put it away and bring out this one's. Not if it cannot be put away
+        if self.seed_hash is not None and self.autosave is not None and self._write_autosave():
             file = self.autosave / autosave_name(seed_hash)
-            if file.exists():
-                self.load_file(str(file))
-            else:
+            if not (file.exists() and self._load_autosave(file)):
                 for page in self.pages.values():
                     page.init_page()
         self.seed_hash = seed_hash
@@ -465,7 +600,8 @@ class MainWindow(QMainWindow):
     def _pump_asyncio(self):
         """Run pending asyncio callbacks once, from the Qt timer."""
         loop = self.loop
-        if loop is None:
+        # Already running while a dialog opened from the tracker is up: the dialog's event loop fires this timer too
+        if loop is None or loop.is_running():
             return
         loop.call_soon(loop.stop)
         loop.run_forever()

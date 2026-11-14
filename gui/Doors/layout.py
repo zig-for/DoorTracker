@@ -2,7 +2,6 @@
 
 import math
 import random
-from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -38,7 +37,6 @@ class Body:
     mobility: float  # 0 fixed .. 1 free
     weight: int  # room count
     damping: Damping
-    group: object = None  # bodies sharing a group attract when grouping is on
 
 
 @dataclass(frozen=True)
@@ -114,7 +112,6 @@ def relax(
     improve: bool = False,
     cold: bool = False,
     circles: bool = False,
-    grouped: bool = False,
 ) -> tuple[list[float], list[float], float, float]:
     """Force solver.
 
@@ -128,10 +125,8 @@ def relax(
     damping = [body.damping for body in bodies]
     rects = [body.rects for body in bodies]
     mobility = [body.mobility for body in bodies]
-    centres = []
     extents = []
     for boxes in rects:
-        centres.append((sum(b[0] for b in boxes) / len(boxes), sum(b[1] for b in boxes) / len(boxes)))
         extents.append(
             (
                 min(b[0] - b[2] for b in boxes),
@@ -150,13 +145,6 @@ def relax(
     for k, spring in enumerate(springs):
         incident[spring.a].append(k)
         incident[spring.b].append(k)
-
-    groups = []
-    if grouped:
-        by_group = defaultdict(list)
-        for i, body in enumerate(bodies):
-            by_group[body.group].append(i)
-        groups = [members for members in by_group.values() if len(members) > 1]
 
     margin_x = margin_y = HARD_GAP if cold else MIN_GAP
     reach = spacing
@@ -365,30 +353,15 @@ def relax(
             tx[ia] -= ex * share * weight[ib]
             ty[ia] -= ey * share * weight[ib]
 
-        # No centring force; "Group by original dungeon" pulls towards each dungeon's centroid
-        gx: list[float | None] = [None] * n
-        gy: list[float | None] = [None] * n
-        for members in groups:
-            mx = sum(xs[i] + centres[i][0] for i in members) / len(members)
-            my = sum(ys[i] + centres[i][1] for i in members) / len(members)
-            for i in members:
-                gx[i], gy[i] = mx, my
-
+        # No centring force
         moves = []
         fastest = 0.0
         for i in range(n):
             if mobility[i] == 0:
                 moves.append((0.0, 0.0))
                 continue
-            dx = dy = 0.0
-            towards_x, towards_y = gx[i], gy[i]
-            if towards_x is not None and towards_y is not None:
-                dx = (towards_x - xs[i] - centres[i][0]) * 0.25
-                dy = (towards_y - ys[i] - centres[i][1]) * 0.25
-            dx += tx[i] * 0.45
-            dy += ty[i] * 0.45
-            dx *= mobility[i]
-            dy *= mobility[i]
+            dx = tx[i] * 0.45 * mobility[i]
+            dy = ty[i] * 0.45 * mobility[i]
             moves.append((dx, dy))
             fastest = max(fastest, math.hypot(dx, dy))
         # Cold: scale all moves by one factor; per-block caps break momentum balance and cause drift
@@ -671,23 +644,3 @@ def stress(
             row_height = max(row_height, height)
 
     return [xs[i] - centre[i][0] for i in range(n)], [ys[i] - centre[i][1] for i in range(n)]
-
-
-def convex_hull(points: Iterable[Point]) -> list[Point]:
-    points = sorted(set(points))
-    if len(points) <= 2:
-        return points
-
-    def cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-    lower, upper = [], []
-    for p in points:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    for p in reversed(points):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    return lower[:-1] + upper[:-1]

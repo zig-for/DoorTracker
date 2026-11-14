@@ -1,7 +1,9 @@
 """The map kept between launches."""
 
+import pytest
 import yaml
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QMessageBox
 
 import DoorsTracker
 from support import grow, positions
@@ -11,6 +13,22 @@ TAB = "Turtle_Rock"
 
 def links(window):
     return [(x.door, x.linked_door) for x in window.pages[TAB].model.door_links]
+
+
+@pytest.fixture
+def warnings(monkeypatch):
+    """Titles of the warnings shown, in place of the dialogs."""
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: shown.append(args[1]))
+    return shown
+
+
+def autosave_of_a_map(window, folder):
+    """Text of an autosave of a small map, made by this window."""
+    window.start_autosave(folder, restore=True)
+    grow(window.pages[TAB].model, 3)
+    window.close()
+    return (folder / "autosave.yaml").read_text()
 
 
 def test_a_change_is_saved_and_the_next_window_gets_the_map_back(open_window, tmp_path, monkeypatch):
@@ -52,3 +70,54 @@ def test_each_seed_keeps_its_own_map(window, tmp_path):
     assert links(window) == first_map
     window.seed_seen("bbbbbbbbbb")
     assert links(window) == second_map
+
+
+@pytest.mark.parametrize("damage", ["not yaml", "cut short", "missing"])
+def test_a_damaged_autosave_is_reported_and_left_alone(open_window, tmp_path, warnings, damage):
+    whole = autosave_of_a_map(open_window(), tmp_path)
+    file = tmp_path / "autosave.yaml"
+    if damage == "missing":
+        file.unlink()
+    else:
+        # Cut at the end of a line, which is still yaml
+        file.write_text("{{{{" if damage == "not yaml" else whole[: whole.index("\n", len(whole) // 2) + 1])
+    left = file.read_text() if file.exists() else None
+
+    window = open_window()
+    window.start_autosave(tmp_path, restore=True)
+    assert warnings == ["Autosave not loaded"]
+    assert not window.autosave_action.isChecked()
+    assert window.settings["autosave"] is True
+
+    # Nothing is saved over it, even on close
+    grow(window.pages[TAB].model, 1)
+    window.pages[TAB].rebuild()
+    window.close()
+    assert (file.read_text() if file.exists() else None) == left
+
+
+def test_a_save_that_fails_is_reported_once(window, tmp_path, warnings, monkeypatch):
+    monkeypatch.setattr(DoorsTracker, "SAVE_DELAY", 0)
+    window.start_autosave(tmp_path / "no such folder", restore=True)
+    for _ in range(2):
+        grow(window.pages[TAB].model, 1)
+        window.pages[TAB].rebuild()
+        QTest.qWait(50)
+    assert warnings == ["Autosave failed"]
+    assert not window.autosave_action.isChecked()
+
+
+def test_a_seed_whose_autosave_is_damaged_gets_an_empty_map(window, tmp_path, warnings):
+    window.start_autosave(tmp_path, restore=True)
+    window.seed_seen("aaaaaaaaaa")
+    grow(window.pages[TAB].model, 2)
+    damaged = tmp_path / "autosave-bbbbbbbbbb.yaml"
+    damaged.write_text("{{{{")
+
+    window.seed_seen("bbbbbbbbbb")
+    assert warnings == ["Autosave not loaded"]
+    assert links(window) == []
+    window.close()
+    assert damaged.read_text() == "{{{{"
+    # The map that was on screen was put away first
+    assert len(yaml.safe_load((tmp_path / "autosave-aaaaaaaaaa.yaml").read_text())[TAB]["door_links"]) == 2

@@ -142,7 +142,6 @@ class GraphModel:
         self.experimental_flags = experimental_flags
         self.show_all_doors = False
         self.auto_join = True
-        self.group_by_dungeon = False
         self.spacing = float(REPEL_RANGE)  # repulsion reach
         self.leaf_pull = 2.5  # pull boost for blocks linked to a single other block
         self.circle_repulsion = False  # repel as one enclosing circle per block
@@ -543,10 +542,6 @@ class GraphModel:
                 self.pos[node] = [float(value[0]), float(value[1])]
                 if len(value) > 2 and value[2]:
                     self.fixed.add(node)
-        if data.get("satellite_pull"):
-            self.leaf_pull = max(1.0, min(4.0, float(data["satellite_pull"])))
-        if data.get("spacing"):
-            self.spacing = max(10.0, min(200.0, float(data["spacing"])))
         had_positions = bool(self.pos)
         self._sync_model()
         if self.pos and not joins_saved:
@@ -609,8 +604,6 @@ class GraphModel:
                 ]
                 for n, p in self.pos.items()
             },
-            "spacing": round(self.spacing, 1),
-            "satellite_pull": self.leaf_pull,
         }
 
     # ------------------------------------------------- data, blocks, layout, forces
@@ -1195,9 +1188,7 @@ class GraphModel:
                 mobility = 1.0
             else:
                 mobility = old_mobility
-            bodies.append(
-                layout.Body(rects, mobility, len(members), self._damping.setdefault(root, layout.Damping()), supertile(root.tile).dungeon)
-            )
+            bodies.append(layout.Body(rects, mobility, len(members), self._damping.setdefault(root, layout.Damping())))
         return bodies
 
     def _springs(self, edges: list[Edge]) -> list[layout.Spring]:
@@ -1264,7 +1255,6 @@ class GraphModel:
             improve=improve,
             cold=cold,
             circles=self.circle_repulsion,
-            grouped=self.group_by_dungeon,
         )
         for root, x, y in zip(roots, xs, ys):
             self._place_block(root, x, y)

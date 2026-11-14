@@ -23,7 +23,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QGraphicsItem,
     QGraphicsLineItem,
     QGraphicsPathItem,
@@ -32,11 +31,9 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
-    QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -46,7 +43,7 @@ from data.doors_sprite_data import ITEM_SHEET_PATH
 from data.room_bounds import room_bounds
 from data.worlds_data import World
 from gui.Doors.graph_model import THUMB, Edge, GraphModel, TileState
-from gui.Doors.layout import LINK_GAP, convex_hull
+from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
     DOORS,
     DUNGEON_BACKGROUNDS,
@@ -78,8 +75,14 @@ if TYPE_CHECKING:
     from DoorsTracker import MainWindow
 
 MIN_ZOOM, MAX_ZOOM = 0.1, 4.0
-# Settings that are attributes of the model, under the same names
-MODEL_OPTIONS = ("show_all_doors", "group_by_dungeon", "auto_join", "circle_repulsion")
+# Settings that are attributes of the model: setting -> attribute
+MODEL_OPTIONS = {
+    "show_all_doors": "show_all_doors",
+    "auto_join": "auto_join",
+    "circle_repulsion": "circle_repulsion",
+    "spacing": "spacing",
+    "dead_end_pull": "leaf_pull",
+}
 WORLD = 1_000_000  # scene half-extent
 
 
@@ -254,7 +257,7 @@ class RoomItem(QGraphicsItem):
         painter.setPen(QPen(self.colour, 2))
         painter.drawPath(self.outline)
 
-        if lod * 11 >= 5 and self.page.labels_box.isChecked():
+        if lod * 11 >= 5 and self.page.top.settings["labels"]:
             font = QFont()
             font.setPixelSize(11)
             font.setBold(True)
@@ -494,17 +497,6 @@ class IconItem(QGraphicsItem):
                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, self.lobby.replace("_", " "))
 
 
-class HullItem(QGraphicsPolygonItem):
-    """Outline around the supertiles of one original dungeon, when grouping by dungeon."""
-
-    def __init__(self, members: list[Node], colour: str):
-        super().__init__()
-        self.members = members
-        self.setPen(QPen(QColor(lighten(colour, 0.35)), 2))
-        self.setBrush(QColor(lighten(colour, 0.82)))
-        self.setZValue(0)
-
-
 class LinkItem(QGraphicsPathItem):
     """A link, interior connection, drop or warp between two doors."""
 
@@ -724,7 +716,7 @@ class GraphView(QGraphicsView):
 
 
 class GraphPage(QWidget):
-    """One dungeon tab: toolbar, view and input handling."""
+    """One dungeon tab: view and input handling."""
 
     def __init__(self, top: MainWindow, tab_world: World, assets: Assets, use_gl: bool = True):
         super().__init__()
@@ -732,8 +724,8 @@ class GraphPage(QWidget):
         self.tab_world = tab_world
         self.assets = assets
         self.model = GraphModel(tab_world, top.settings)
-        for name in MODEL_OPTIONS:
-            setattr(self.model, name, top.settings[name])
+        for name, attribute in MODEL_OPTIONS.items():
+            setattr(self.model, attribute, top.settings[name])
         self.dungeon_name = self.model.dungeon_name
 
         background = QColor(DUNGEON_BACKGROUNDS.get(self.dungeon_name, BACKGROUND))
@@ -746,22 +738,33 @@ class GraphPage(QWidget):
         self._doors: dict[Node, DoorsItem] = {}
         self._labels: dict[Node, LabelItem] = {}
         self._links: list[LinkItem] = []
-        self._hulls: list[HullItem] = []
         self._reach: ReachItem | None = None
         self._rubber: QGraphicsLineItem | None = None
         self._needs_fit = True
         self._settling_size = False
+        self._forces_stale = False  # a force setting changed while this tab was hidden
 
         self.scene = QGraphicsScene(self)
         self.scene.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
         self.view = GraphView(self, use_gl=use_gl)
 
-        self._build_toolbar()
+        self.status = top.status
+        # These act on this tab only, so they are not on the window's toolbar: they float over a corner of the map
+        panel = QWidget(self.view)
+        panel.setAutoFillBackground(True)
+        buttons = QHBoxLayout(panel)
+        buttons.setContentsMargins(3, 3, 3, 3)
+        buttons.setSpacing(3)
+        fit = QPushButton("Fit")
+        fit.clicked.connect(self.fit_view)
+        relayout = QPushButton("Re-layout")
+        relayout.clicked.connect(self.relayout)
+        buttons.addWidget(fit)
+        buttons.addWidget(relayout)
+        panel.adjustSize()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.view, 1)
+        layout.addWidget(self.view)
 
         self.timer = QTimer(self)
         self.timer.setInterval(15)
@@ -770,74 +773,13 @@ class GraphPage(QWidget):
             self.timer.start()
         self.rebuild()
 
-    # ------------------------------------------------------------------ toolbar
-
-    def _build_toolbar(self):
-        self.toolbar = QWidget()
-        row = QHBoxLayout(self.toolbar)
-        row.setContentsMargins(6, 3, 6, 3)
-        fit = QPushButton("Fit")
-        fit.clicked.connect(self.fit_view)
-        relayout = QPushButton("Re-layout")
-        relayout.clicked.connect(self.relayout)
-        self.group_box = QCheckBox("Group by original dungeon")
-        self.join_box = QCheckBox("Join fitting rooms")
-        self.spacing_slider = QSlider(Qt.Orientation.Horizontal)
-        self.spacing_slider.setRange(10, 200)
-        self.spacing_slider.setValue(int(self.model.spacing))
-        self.spacing_slider.setFixedWidth(120)
-        self.spacing_slider.valueChanged.connect(self._on_spacing)
-        self.pull_slider = QSlider(Qt.Orientation.Horizontal)
-        self.pull_slider.setRange(10, 40)
-        self.pull_slider.setValue(int(self.model.leaf_pull * 10))
-        self.pull_slider.setFixedWidth(80)
-        self.pull_slider.valueChanged.connect(self._on_pull)
-        self.simulate_box = QCheckBox("Simulate")
-        self.circle_box = QCheckBox("Circle repulsion")
-        self.circle_box.setToolTip("Experiment: each block repels as one circle around all its rooms")
-        self.reach_box = QCheckBox("Show repulsion")
-        self.reach_box.setToolTip("Draw what each block repels as. Blocks push each other when their dashed outlines overlap")
-        self.follow_box = QCheckBox("Follow player")
-        self.labels_box = QCheckBox("Labels")
-        # Each checkbox shows a setting of the window's, which is the same in every tab
-        self._boxes = {
-            "group_by_dungeon": self.group_box,
-            "auto_join": self.join_box,
-            "circle_repulsion": self.circle_box,
-            "show_repulsion": self.reach_box,
-            "simulate": self.simulate_box,
-            "follow_player": self.follow_box,
-            "labels": self.labels_box,
-        }
-        for name, box in self._boxes.items():
-            box.setChecked(self.top.settings[name])
-            box.toggled.connect(lambda checked, name=name: self.top.set_option(name, checked))
-        self.status = QLabel("")
-        self.status.setMinimumWidth(50)
-        for widget in (fit, relayout, self.group_box, self.join_box):
-            row.addWidget(widget)
-        row.addWidget(QLabel("Spacing"))
-        row.addWidget(self.spacing_slider)
-        row.addWidget(QLabel("Satellite pull"))
-        row.addWidget(self.pull_slider)
-        row.addWidget(self.circle_box)
-        row.addWidget(self.reach_box)
-        row.addWidget(self.simulate_box)
-        row.addWidget(self.follow_box)
-        row.addWidget(self.labels_box)
-        row.addWidget(self.status, 1)
+    # ------------------------------------------------------------------ options
 
     def option_changed(self, name: str) -> None:
         """Act on a setting the window has just changed."""
         value = self.top.settings[name]
-        box = self._boxes.get(name)
-        if box is not None:
-            # Changed in another tab
-            box.blockSignals(True)
-            box.setChecked(value)
-            box.blockSignals(False)
         if name in MODEL_OPTIONS:
-            setattr(self.model, name, value)
+            setattr(self.model, MODEL_OPTIONS[name], value)
         if name == "labels":
             for label in self._labels.values():
                 label.setVisible(value)
@@ -852,25 +794,22 @@ class GraphPage(QWidget):
                 self.timer.start()
             else:
                 self.timer.stop()
-        elif name == "circle_repulsion":
-            self._forces_changed()
-        elif name in ("group_by_dungeon", "auto_join", "trim_rooms", "split_rooms"):
+        elif name in ("spacing", "dead_end_pull", "circle_repulsion"):
+            if self.isVisible():
+                self._forces_changed()
+            else:
+                # Settled when the tab is next shown, not on every step of a slider
+                self._forces_stale = True
+        elif name in ("auto_join", "trim_rooms", "split_rooms"):
             # These change which blocks there are, or their shapes
             self.relayout()
         elif name != "follow_player":
             self.redraw_canvas()
 
-    def _on_spacing(self, value):
-        self.model.spacing = float(value)
-        self._forces_changed()
-
-    def _on_pull(self, value):
-        self.model.leaf_pull = value / 10
-        self._forces_changed()
-
     def _forces_changed(self):
         """Settle now unless the simulation is running."""
-        if not self.simulate_box.isChecked():
+        self._forces_stale = False
+        if not self.top.settings["simulate"]:
             self.model.settle(150)
             self.update_positions()
         self.top.map_changed()
@@ -888,22 +827,13 @@ class GraphPage(QWidget):
         model = self.model
         self.scene.clear()
         self._reach = ReachItem(self)
-        self._reach.setVisible(self.reach_box.isChecked())
+        self._reach.setVisible(self.top.settings["show_repulsion"])
         self.scene.addItem(self._reach)
-        self._rooms, self._doors, self._links, self._hulls = {}, {}, [], []
+        self._rooms, self._doors, self._links = {}, {}, []
         self._labels = {}
         self._rubber = None
         self._focus = None
         self.hot_door = None
-
-        if model.group_by_dungeon:
-            by_dungeon: dict[str | None, list[Node]] = {}
-            for node in model.nodes():
-                by_dungeon.setdefault(supertile(node.tile).dungeon, []).append(node)
-            for dungeon, members in by_dungeon.items():
-                hull = HullItem(members, dungeon_colour(dungeon))
-                self.scene.addItem(hull)
-                self._hulls.append(hull)
 
         lobbies = {x.door: x.lobby for x in model.lobby_doors}
         for node in model.nodes():
@@ -915,7 +845,7 @@ class GraphPage(QWidget):
             self._doors[node] = doors
             if not room.compact:
                 label = LabelItem(room)
-                label.setVisible(self.labels_box.isChecked())
+                label.setVisible(self.top.settings["labels"])
                 self.scene.addItem(label)
                 self._labels[node] = label
 
@@ -985,15 +915,6 @@ class GraphPage(QWidget):
                 link.update_path()
         if self._reach is not None and self._reach.isVisible():
             self._reach.refresh()
-        for hull in self._hulls:
-            points = []
-            for node in hull.members:
-                x, y = model.pos[node]
-                left, top, right, bottom = model.box(node)
-                for px in (left - 16, right + 16):
-                    for py in (top - 16, bottom + 16):
-                        points.append((x + px, y + py))
-            hull.setPolygon(QPolygonF([QPointF(px, py) for px, py in convex_hull(points)]))
         if self._rubber is not None and self.selected_door:
             line = self._rubber.line()
             start = model.port(self.selected_door)
@@ -1005,6 +926,8 @@ class GraphPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if self._forces_stale:
+            self._forces_changed()
         if self._needs_fit and self.model.pos:
             # A tab not yet shown has no real size: refit on resize until the user moves the camera
             self._settling_size = True
@@ -1363,12 +1286,6 @@ class GraphPage(QWidget):
     def load_yaml(self, data):
         had_positions = self.model.load(data)
         self.selected_door = None
-        self.spacing_slider.blockSignals(True)
-        self.pull_slider.blockSignals(True)
-        self.spacing_slider.setValue(int(self.model.spacing))
-        self.pull_slider.setValue(int(self.model.leaf_pull * 10))
-        self.spacing_slider.blockSignals(False)
-        self.pull_slider.blockSignals(False)
         camera = data.get("camera")
         self._needs_fit = not (camera and had_positions)
         self.rebuild()
@@ -1425,7 +1342,7 @@ class GraphPage(QWidget):
             if changed in self._rooms:
                 self._rooms[changed].update()
                 self._doors[changed].update()
-        if previous != node and self.follow_box.isChecked() and node in model.pos:
+        if previous != node and self.top.settings["follow_player"] and node in model.pos:
             # Follow player: recentre when the room is not fully visible
             cx, cy, zoom = self.view.camera()
             size = self.view.viewport().size()

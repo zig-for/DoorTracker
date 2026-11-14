@@ -1,19 +1,37 @@
 """Options kept between launches."""
 
+import pytest
+from PySide6.QtWidgets import QMessageBox
+
+import DoorsTracker
+
 TAB = "Turtle_Rock"
+
+
+@pytest.mark.parametrize("text", ["split_rooms: [not closed", "", "split_rooms: false\nsimulate: sometimes\n", "window: zz\n"])
+def test_a_settings_file_that_cannot_be_used_is_reported_and_the_defaults_used(open_window, tmp_path, monkeypatch, text):
+    file = tmp_path / "settings.yaml"
+    file.write_text(text)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[2]))
+
+    window = open_window(file, size=None)
+    assert window.settings == DoorsTracker.DEFAULT_SETTINGS | {"window": window.settings["window"]}
+    # Hex that is no window geometry is not an error: the window takes its usual size
+    assert len(warnings) == (0 if text.startswith("window") else 1)
+    assert window.height() == DoorsTracker.WINDOW_SIZES["medium"][1]
 
 
 def test_options_changed_in_one_window_are_set_in_the_next(open_window, tmp_path):
     file = tmp_path / "settings.yaml"
     first = open_window(file)
     first.select_dungeon(TAB)
-    first.pages[TAB].follow_box.click()
-    first.pages[TAB].join_box.click()
+    first.boxes["follow_player"].click()
+    first.boxes["auto_join"].click()
+    first.sliders["spacing"].setValue(90)
+    first.sliders["dead_end_pull"].setValue(15)
     first.set_option("split_rooms", False)
     first.resize(first.width(), 600)
-
-    # A toolbar checkbox is the same in every tab
-    assert all(page.follow_box.isChecked() for page in first.pages.values())
     first.close()
 
     second = open_window(file, size=None)
@@ -21,5 +39,8 @@ def test_options_changed_in_one_window_are_set_in_the_next(open_window, tmp_path
     assert second.height() == 600
     assert second.current_dungeon() == TAB
     assert second.settings["split_rooms"] is False
-    assert all(page.follow_box.isChecked() for page in second.pages.values())
-    assert not any(page.join_box.isChecked() or page.model.auto_join for page in second.pages.values())
+    assert second.boxes["follow_player"].isChecked() and not second.boxes["auto_join"].isChecked()
+    assert (second.sliders["spacing"].value(), second.sliders["dead_end_pull"].value()) == (90, 15)
+    # The toolbar's settings are the same in every tab
+    models = [page.model for page in second.pages.values()]
+    assert {(model.auto_join, model.spacing, model.leaf_pull) for model in models} == {(False, 90.0, 1.5)}
