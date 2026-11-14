@@ -93,10 +93,10 @@ HAND_AREAS = {
     },
     (7, 12): {"TR Torches Ledge WS": [(16, 330, 100, 496)]},
     (10, 1): {"PoD Big Chest Balcony W": [(16, 238, 96, 312)]},
-    # Ledge: walkway ring over the room
+    # Ledge: U-shaped walkway, down both sides and across. Floor: the rest, including the corridor inside the U
     (9, 11): {
-        "Eastern Cannonball Ledge WN": [(16, 104, 496, 236)],
-        "Eastern Cannonball S": [(16, 32, 496, 104), (16, 236, 496, 496)],
+        "Eastern Cannonball Ledge WN": [(16, 96, 72, 216), (440, 96, 496, 216), (16, 184, 496, 216)],
+        "Eastern Cannonball S": [(16, 32, 496, 96), (72, 96, 440, 184), (16, 216, 496, 496)],
     },
     # Landing: middle column down to its railing
     (10, 3): {"PoD Big Key Landing Down Stairs": [(216, 32, 296, 190)]},
