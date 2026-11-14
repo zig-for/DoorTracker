@@ -31,6 +31,7 @@ dungeon_ids = {
 
 mem_addresses = {
     "race": (0x180213, 0x1),
+    "seed_hash": (0x180215, 0x5),  # the code shown on the file select screen; differs per seed
     "gamemode": (0xF50010, 0x1),
     "indoors": (0xF5001B, 0x1),
     "link_y": (0xF50020, 0x2),
@@ -112,6 +113,7 @@ class TrackerUI(Protocol):
     """What the tracker needs from the window."""
 
     device: str | None
+    connected: bool  # reading from a device through SNI
 
     @property
     def pages(self) -> Mapping[str, TrackerPage]: ...  # by dungeon name
@@ -121,6 +123,8 @@ class TrackerUI(Protocol):
     def set_devices(self, uris: list[str]) -> None: ...
 
     def race_rom_warning(self) -> None: ...
+
+    def seed_seen(self, seed_hash: str) -> bool: ...  # False to stop tracking
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -143,6 +147,7 @@ async def sni_probe(ui: TrackerUI, args: argparse.Namespace, forced_autotrack: b
                 last_error = details
             ui.set_title(f"Janker Door Tracker -Reconnecting... ({details.split(chr(59))[0][:70]})")
         finally:
+            ui.connected = False
             await channel.close()
         await asyncio.sleep(RETRY_SECONDS)
 
@@ -178,6 +183,7 @@ async def _sni_session(
     mem_mapping = mem_mapping.memoryMapping
     mem_request = build_multi_request(dev_addrspace, mem_mapping)
     mem_request_names = list(mem_request.keys())
+    ui.connected = True
 
     if not forced_autotrack:
         ui.set_title(f"Janker Door Tracker -Auto-tracking Enabled (Connected to {dev_uri})")
@@ -204,6 +210,7 @@ async def _sni_session(
     tab_changed = False
     is_dark = False
     boss_just_killed = False
+    seed_hash: str | None = None  # of the game last read in this session
     old_data = {k: None for k in mem_request_names}
     eg_tile = (0, 0)
 
@@ -234,6 +241,24 @@ async def _sni_session(
 
                 await asyncio.sleep(0.1)
                 continue
+
+            # Only in game: with no game running the bytes read are not a seed's.
+            if data["seed_hash"] != seed_hash:
+                if seed_hash is not None:
+                    # Another game was loaded and the connection stayed up. What is remembered is the old game's:
+                    # acting on it would link its last door to this game's first room
+                    current_tile = previous_tile = None
+                    current_x = current_y = previous_x = previous_y = previous_layer = None
+                    was_transitioning = was_falling = was_dead = was_mirroring = False
+                    cycle_skipped = boss_just_killed = tab_changed = False
+                    previous_dungeon = None
+                    # The first room seen was not walked into
+                    resumed = True
+                seed_hash = data["seed_hash"]
+            # Before the race check, so a race seed gets its own map even though it is not tracked
+            if not ui.seed_seen(data["seed_hash"]):
+                ui.set_title("Janker Door Tracker -Auto-tracking stopped: disconnected to leave the map as it is")
+                break
 
             if data["race"] == "01" and not forced_autotrack:
                 ui.race_rom_warning()

@@ -25,7 +25,7 @@ from data.doors_data import (
 )
 from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
-from gui.Doors.layout import CONTACT_RANGE, LINK_GAP, REPEL_RANGE, enclosing_circle
+from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
@@ -116,7 +116,9 @@ class RepulsionShape:
 
     circle: layout.Circle | None  # None when repelling wall to wall
     boxes: list[Box]  # its rooms
-    reach: float
+    reach: float  # of the push between circles, when there is one
+    contact: float  # reach of the push between rooms
+    fixed: bool  # pinned or held: it pushes other blocks but is not moved
 
 
 @dataclass
@@ -142,7 +144,6 @@ class GraphModel:
         self.experimental_flags = experimental_flags
         self.show_all_doors = False
         self.auto_join = True
-        self.group_by_dungeon = False
         self.spacing = float(REPEL_RANGE)  # repulsion reach
         self.leaf_pull = 2.5  # pull boost for blocks linked to a single other block
         self.circle_repulsion = False  # repel as one enclosing circle per block
@@ -187,11 +188,19 @@ class GraphModel:
         self._seam_doors: set[str] = set()
         self._linked_doors: set[str] = set()
         self._piece_cache: dict[Node, list[Box]] = {}
+        # Solver inputs that only change when the blocks are rebuilt; see _build_blocks
+        self._settle_springs: list[layout.Spring] | None = None
+        self._body_rects: dict[Node, list[layout.Rect]] = {}  # by block root
         for tile in mandatory_tiles[self.tab_world]:
             self._ensure_tile(tile)
         self.update()
 
     # ------------------------------------------------------------------ changes
+
+    def untouched(self) -> bool:
+        """Whether nothing has been tracked or added since reset(). A reset map already has its drop entrances."""
+        fresh = GraphModel(self.tab_world, self.experimental_flags)
+        return not self.door_links and self.special_doors == fresh.special_doors and set(self.tiles) == set(fresh.tiles)
 
     def update(self) -> None:
         """Rebuild blocks and lay out new nodes. Call after any data change."""
@@ -215,7 +224,10 @@ class GraphModel:
         """Run the solver in place for some iterations."""
         if not self.pos:
             return
-        self._relax(iterations=iterations, old_mobility=1.0, edges=self._layout_edges(), cold=True)
+        if self._settle_springs is None:
+            # The same until the blocks are next rebuilt, and slow to work out: Simulate settles 60 times a second
+            self._settle_springs = self._springs(self._layout_edges())
+        self._relax(iterations=iterations, old_mobility=1.0, springs=self._settle_springs, cold=True)
 
     def _refresh_door_sets(self) -> None:
         self._seam_doors = set()
@@ -531,6 +543,11 @@ class GraphModel:
             node = Node(*(int(x) for x in str(key).split("__")))
             if node.tile in self.tiles and node.part < self.real_rooms.part_count(node.tile):
                 self.visited.add(node)
+        self.kept_expanded = set()
+        for key in data.get("expanded") or []:
+            node = Node(*(int(x) for x in str(key).split("__")))
+            if node.tile in self.tiles:
+                self.kept_expanded.add(node)
         for key, value in (data.get("graph_layout") or {}).items():
             # Keys: "x__y" for part 0, "x__y__part" otherwise
             node = Node(*(int(x) for x in str(key).split("__")))
@@ -538,10 +555,6 @@ class GraphModel:
                 self.pos[node] = [float(value[0]), float(value[1])]
                 if len(value) > 2 and value[2]:
                     self.fixed.add(node)
-        if data.get("satellite_pull"):
-            self.leaf_pull = max(1.0, min(4.0, float(data["satellite_pull"])))
-        if data.get("spacing"):
-            self.spacing = max(10.0, min(200.0, float(data["spacing"])))
         had_positions = bool(self.pos)
         self._sync_model()
         if self.pos and not joins_saved:
@@ -595,6 +608,7 @@ class GraphModel:
                 if n.tile in self.tiles and self.real_rooms.part_count(n.tile) > 1
             ),
             "special_doors": dict(self.special_doors),
+            "expanded": sorted(f"{n.x}__{n.y}__{n.part}" for n in self.kept_expanded),
             "graph_layout": {
                 (f"{n.x}__{n.y}" if n.part == 0 else f"{n.x}__{n.y}__{n.part}"): [
                     round(p[0], 1),
@@ -603,8 +617,6 @@ class GraphModel:
                 ]
                 for n, p in self.pos.items()
             },
-            "spacing": round(self.spacing, 1),
-            "satellite_pull": self.leaf_pull,
         }
 
     # ------------------------------------------------- data, blocks, layout, forces
@@ -925,6 +937,8 @@ class GraphModel:
 
     def _build_blocks(self) -> None:
         self.blocks = self._compute_blocks(self._join_order())
+        self._settle_springs = None
+        self._body_rects = {}
 
     def _optimise_join_order(self) -> None:
         """Random search for the order that joins the most links. Full re-layout only."""
@@ -1020,7 +1034,7 @@ class GraphModel:
         )
 
     def _layout(self, full: bool = False) -> None:
-        gap = LINK_GAP
+        gap = layout.link_gap(self.spacing)
         nodes = self.nodes()
         if not nodes:
             return
@@ -1105,16 +1119,17 @@ class GraphModel:
                 pending.discard(root)
 
         self.unsettled |= set(new_nodes)
+        springs = self._springs(edges)
         if not full:
             # Incremental: move only the new blocks
-            self._relax(iterations=90, old_mobility=0.0, edges=edges, cold=True)
+            self._relax(iterations=90, old_mobility=0.0, springs=springs, cold=True)
             # then separate overlaps
-            self._relax(iterations=0, old_mobility=1.0, edges=edges, cold=True)
+            self._relax(iterations=0, old_mobility=1.0, springs=springs, cold=True)
         else:
             # Stress for the global shape, then forces to shorten links and separate overlaps
             self._stress_layout(edges)
-            self._relax(iterations=180, old_mobility=1.0, edges=edges, improve=True)
-            self._relax(iterations=150, old_mobility=1.0, edges=edges, cold=True)
+            self._relax(iterations=180, old_mobility=1.0, springs=springs, improve=True)
+            self._relax(iterations=150, old_mobility=1.0, springs=springs, cold=True)
             self._park_unlinked(edges)
         self._laid_spacing = self.spacing
 
@@ -1138,7 +1153,9 @@ class GraphModel:
             if self.circle_repulsion:
                 corners = [(bx, by) for left, top, right, bottom in boxes for bx in (left, right) for by in (top, bottom)]
                 circle = enclosing_circle(corners)
-            shapes.append(RepulsionShape(circle, boxes, self.spacing if circle else max(self.spacing, CONTACT_RANGE)))
+            fixed = any(m in self.fixed or m in self.held for m in members)
+            contact = layout.contact_range(self.spacing, self.circle_repulsion)
+            shapes.append(RepulsionShape(circle, boxes, self.spacing, contact, fixed))
         return shapes
 
     def _park_unlinked(self, edges: list[Edge]) -> None:
@@ -1178,20 +1195,20 @@ class GraphModel:
         """Blocks as layout.Body, in blocks.members order. Unsettled blocks are free; the rest get old_mobility."""
         bodies = []
         for root, members in self.blocks.members.items():
-            rects = []
-            for m in members:
-                ox, oy = self.blocks.offset[m]
-                for left, top, right, bottom in self.pieces(m):
-                    rects.append((ox + (left + right) / 2, oy + (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2))
+            rects = self._body_rects.get(root)
+            if rects is None:
+                rects = self._body_rects[root] = []
+                for m in members:
+                    ox, oy = self.blocks.offset[m]
+                    for left, top, right, bottom in self.pieces(m):
+                        rects.append((ox + (left + right) / 2, oy + (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2))
             if any(m in self.fixed or m in self.held for m in members):
                 mobility = 0.0
             elif all(m in self.unsettled for m in members):
                 mobility = 1.0
             else:
                 mobility = old_mobility
-            bodies.append(
-                layout.Body(rects, mobility, len(members), self._damping.setdefault(root, layout.Damping()), supertile(root.tile).dungeon)
-            )
+            bodies.append(layout.Body(rects, mobility, len(members), self._damping.setdefault(root, layout.Damping())))
         return bodies
 
     def _springs(self, edges: list[Edge]) -> list[layout.Spring]:
@@ -1244,21 +1261,22 @@ class GraphModel:
             if free:
                 self._place_block(root, x + self.blocks.offset[root][0], y + self.blocks.offset[root][1])
 
-    def _relax(self, iterations: int, old_mobility: float, edges: list[Edge], improve: bool = False, cold: bool = False) -> float:
+    def _relax(
+        self, iterations: int, old_mobility: float, springs: list[layout.Spring], improve: bool = False, cold: bool = False
+    ) -> float:
         """Run the force solver on the current positions. Returns total link length."""
         roots = list(self.blocks.members)
         xs, ys, cost, self._last_step = layout.relax(
             self._bodies(old_mobility),
             [self.pos[r][0] for r in roots],
             [self.pos[r][1] for r in roots],
-            self._springs(edges),
+            springs,
             iterations=iterations,
             spacing=self.spacing,
             leaf_pull=self.leaf_pull,
             improve=improve,
             cold=cold,
             circles=self.circle_repulsion,
-            grouped=self.group_by_dungeon,
         )
         for root, x, y in zip(roots, xs, ys):
             self._place_block(root, x, y)

@@ -5,6 +5,7 @@ import asyncio
 
 import grpc
 
+import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, door_coordinates, doors_data
 from gui.Doors.rooms import INTERIOR_DOORS
@@ -25,7 +26,7 @@ def door_facing(facing, avoid=None):
     raise AssertionError(f"no {facing} door")
 
 
-def reading(tile, x, y, lamp=True, transitioning=False, indoors=True):
+def reading(tile, x, y, lamp=True, transitioning=False, indoors=True, seed="0102030405"):
     """What the tracker reads from memory with the player at pixel (x, y) of a supertile."""
 
     def coordinate(supertile, pixel):
@@ -34,6 +35,7 @@ def reading(tile, x, y, lamp=True, transitioning=False, indoors=True):
 
     return {
         "race": "00",
+        "seed_hash": seed,
         "gamemode": "07",
         "indoors": "01" if indoors else "00",
         "link_y": coordinate(tile[1], y),
@@ -146,6 +148,30 @@ def test_walking_through_a_door_and_into_a_dark_room(window, app, monkeypatch):
     # Dark with no lamp: on the map but hidden, and the player is not drawn
     assert seen["lamp lit"] == {**seen["lamp lit"], "player": None, "dark room lit": False, "dark room hidden": True}
     assert seen["end"] == {**seen["end"], "player": DARK_ROOM, "dark room lit": True, "dark room hidden": False}
+
+
+def test_the_tracker_stops_when_the_window_says_to_disconnect(window, app, monkeypatch):
+    monkeypatch.setattr(window, "seed_seen", lambda seed_hash: False)
+    tile, door = door_facing("No")
+    seen = play(window, app, monkeypatch, [(f"reading {k}", reading(tile, door["x"], door["y"])) for k in range(3)])
+
+    # It stopped at the first reading, before putting the player on the map
+    assert list(seen) == ["reading 0"]
+    assert window.pages[TAB].model.player is None
+    assert "disconnected" in window.windowTitle()
+
+
+def test_loading_another_seed_mid_dungeon_adds_nothing_from_the_old_game(window, app, monkeypatch):
+    # The connection survives a change of ROM, so the tracker still remembers the old game's room
+    monkeypatch.setattr(window, "_ask", lambda *args: DoorsTracker.NEW_MAP)
+    first, north_door = door_facing("No")
+    second, south_door = door_facing("So", avoid=first)
+    old_game = reading(first, north_door["x"], north_door["y"], seed="aaaaaaaaaa")
+    new_game = reading(second, south_door["x"], south_door["y"], seed="bbbbbbbbbb")
+
+    seen = play(window, app, monkeypatch, [(f"old {k}", old_game) for k in range(3)] + [(f"new {k}", new_game) for k in range(3)])
+    assert window.seed_hash == "bbbbbbbbbb"
+    assert (seen["end"]["links"], seen["end"]["entrances"]) == ([], [])
 
 
 def supertile_with_doors_facing(*facings):

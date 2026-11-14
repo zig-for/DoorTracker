@@ -2,7 +2,6 @@
 
 import math
 import random
-from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -11,13 +10,13 @@ Circle = tuple[float, float, float]  # centre x, centre y, radius
 Rect = tuple[float, float, float, float]  # centre x, centre y, half width, half height
 Box = tuple[float, float, float, float]  # left, top, right, bottom
 
-LINK_GAP = 46  # preferred door-to-door distance of a link
+LINK_GAP = 46  # preferred door-to-door distance of a link; see link_gap
 MIN_GAP = 14  # minimum block spacing during layout search
-CONTACT_RANGE = 44  # stiff repulsion inside this distance
-CONTACT_STRENGTH = 0.5
+CONTACT_RANGE = 44  # reach of the push between rooms when repelling by circle; see contact_range
+CONTACT_STRENGTH = 0.5  # of the push between rooms: fraction of the shortfall corrected per step
 HARD_GAP = 4  # minimum spacing while settling
-REPEL_RANGE = 60  # default repulsion reach (Spacing slider)
-REPEL_STRENGTH = 0.12  # fraction of the shortfall corrected per step
+REPEL_RANGE = 50  # default repulsion reach (Spacing slider)
+REPEL_STRENGTH = 0.12  # of the push between circles: fraction of the shortfall corrected per step
 LINK_PULL_MAX = 10  # stretch at which link pull stops growing linearly
 
 
@@ -38,7 +37,6 @@ class Body:
     mobility: float  # 0 fixed .. 1 free
     weight: int  # room count
     damping: Damping
-    group: object = None  # bodies sharing a group attract when grouping is on
 
 
 @dataclass(frozen=True)
@@ -91,6 +89,19 @@ def enclosing_circle(points: Iterable[Point]) -> Circle:
     return circle
 
 
+def link_gap(spacing: float) -> float:
+    """Door-to-door distance a link pulls towards. Shrinks with the Spacing slider once that is below it."""
+    return min(LINK_GAP, spacing)
+
+
+def contact_range(spacing: float, circles: bool = False) -> float:
+    """Reach of the stiff push between rooms: the Spacing slider's value.
+
+    When repelling by circle the circles carry the slider's reach, softly, and the rooms only push at close range.
+    """
+    return min(CONTACT_RANGE, spacing) if circles else spacing
+
+
 def link_offset(facing_a: Point | None, facing_b: Point | None, gap: float = LINK_GAP) -> Point | None:
     """Where door b should sit relative to door a, given the directions they face; None if neither has one."""
     if facing_a is not None and facing_b is not None:
@@ -114,24 +125,21 @@ def relax(
     improve: bool = False,
     cold: bool = False,
     circles: bool = False,
-    grouped: bool = False,
 ) -> tuple[list[float], list[float], float, float]:
     """Force solver.
 
     Returns (xs, ys, total link length, mean movement per iteration).
     """
     # Where each spring wants port b relative to port a; None if neither door has a direction
-    wants = [link_offset(spring.facing_a, spring.facing_b) for spring in springs]
-    gap = LINK_GAP
+    gap = link_gap(spacing)
+    wants = [link_offset(spring.facing_a, spring.facing_b, gap) for spring in springs]
     n = len(bodies)
     start_x, start_y = xs[:], ys[:]
     damping = [body.damping for body in bodies]
     rects = [body.rects for body in bodies]
     mobility = [body.mobility for body in bodies]
-    centres = []
     extents = []
     for boxes in rects:
-        centres.append((sum(b[0] for b in boxes) / len(boxes), sum(b[1] for b in boxes) / len(boxes)))
         extents.append(
             (
                 min(b[0] - b[2] for b in boxes),
@@ -151,16 +159,13 @@ def relax(
         incident[spring.a].append(k)
         incident[spring.b].append(k)
 
-    groups = []
-    if grouped:
-        by_group = defaultdict(list)
-        for i, body in enumerate(bodies):
-            by_group[body.group].append(i)
-        groups = [members for members in by_group.values() if len(members) > 1]
-
-    margin_x = margin_y = HARD_GAP if cold else MIN_GAP
+    # The push between rooms is at most CONTACT_STRENGTH x its reach, so with a short reach it is weak. While
+    # settling, the links' pull and the hard minimum gap shrink with it. Otherwise the links press blocks onto
+    # the hard gap, where they slide round each other and the map never rests.
+    tight = min(1.0, spacing / CONTACT_RANGE) if cold else 1.0
+    margin_x = margin_y = HARD_GAP * tight if cold else MIN_GAP
     reach = spacing
-    far = max(reach, CONTACT_RANGE)
+    contact = contact_range(spacing, circles)
 
     # One circle around each block, when repelling by circle
     rings: list[Circle] = []
@@ -172,8 +177,7 @@ def relax(
 
     def repulsion():
         """Push apart blocks closer than the reach."""
-        # Circle mode still uses wall-to-wall contact at close range
-        near = CONTACT_RANGE if circles else far
+        near = contact
         for a in range(n):
             ea = extents[a]
             for b in range(a + 1, n):
@@ -232,9 +236,7 @@ def relax(
                     continue
                 norm = math.hypot(ux, uy) or 1.0
                 # Applied per pair (Gauss-Seidel), which avoids overshoot in crowds
-                push = CONTACT_STRENGTH * max(0.0, CONTACT_RANGE - nearest)
-                if not circles:
-                    push += REPEL_STRENGTH * max(0.0, reach - nearest)
+                push = CONTACT_STRENGTH * max(0.0, contact - nearest)
                 xs[a] -= ux / norm * push * share_a
                 ys[a] -= uy / norm * push * share_a
                 xs[b] += ux / norm * push * share_b
@@ -336,7 +338,7 @@ def relax(
     for it in range(iterations):
         cooling = 1 - it / iterations
         # Cold: no large moves
-        temperature = 10 if cold else 80 * cooling + 4
+        temperature = 10 * tight if cold else 80 * cooling + 4
         prev_x, prev_y = xs[:], ys[:]  # for the half step when cold
         tx = [0.0] * n
         ty = [0.0] * n
@@ -358,6 +360,7 @@ def relax(
                     # Beyond LINK_PULL_MAX the pull grows as sqrt(stretch)
                     pull = math.sqrt(stretch * pull_limit[k])
                     ex, ey = ex / stretch * pull, ey / stretch * pull
+                ex, ey = ex * tight, ey * tight
             # Equal and opposite, split by inverse mass; asymmetric pulls make the map drift
             share = 2 / max(degree[ia], degree[ib]) / (weight[ia] + weight[ib])
             tx[ib] += ex * share * weight[ia]
@@ -365,30 +368,15 @@ def relax(
             tx[ia] -= ex * share * weight[ib]
             ty[ia] -= ey * share * weight[ib]
 
-        # No centring force; "Group by original dungeon" pulls towards each dungeon's centroid
-        gx: list[float | None] = [None] * n
-        gy: list[float | None] = [None] * n
-        for members in groups:
-            mx = sum(xs[i] + centres[i][0] for i in members) / len(members)
-            my = sum(ys[i] + centres[i][1] for i in members) / len(members)
-            for i in members:
-                gx[i], gy[i] = mx, my
-
+        # No centring force
         moves = []
         fastest = 0.0
         for i in range(n):
             if mobility[i] == 0:
                 moves.append((0.0, 0.0))
                 continue
-            dx = dy = 0.0
-            towards_x, towards_y = gx[i], gy[i]
-            if towards_x is not None and towards_y is not None:
-                dx = (towards_x - xs[i] - centres[i][0]) * 0.25
-                dy = (towards_y - ys[i] - centres[i][1]) * 0.25
-            dx += tx[i] * 0.45
-            dy += ty[i] * 0.45
-            dx *= mobility[i]
-            dy *= mobility[i]
+            dx = tx[i] * 0.45 * mobility[i]
+            dy = ty[i] * 0.45 * mobility[i]
             moves.append((dx, dy))
             fastest = max(fastest, math.hypot(dx, dy))
         # Cold: scale all moves by one factor; per-block caps break momentum balance and cause drift
@@ -503,7 +491,7 @@ def stress(
     Returns (xs, ys) of the origins.
     """
     n = len(boxes)
-    gap = LINK_GAP + spacing * 0.5
+    gap = link_gap(spacing) + spacing * 0.5
     centre = [((left + right) / 2, (top + bottom) / 2) for left, top, right, bottom in boxes]
     half = [((right - left) / 2, (bottom - top) / 2) for left, top, right, bottom in boxes]
     size = [(w + h) / 2 for w, h in half]
@@ -671,23 +659,3 @@ def stress(
             row_height = max(row_height, height)
 
     return [xs[i] - centre[i][0] for i in range(n)], [ys[i] - centre[i][1] for i in range(n)]
-
-
-def convex_hull(points: Iterable[Point]) -> list[Point]:
-    points = sorted(set(points))
-    if len(points) <= 2:
-        return points
-
-    def cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-    lower, upper = [], []
-    for p in points:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    for p in reversed(points):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    return lower[:-1] + upper[:-1]

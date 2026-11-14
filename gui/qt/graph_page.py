@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import math
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from PIL import Image
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
+    QBrush,
     QColor,
     QFont,
     QFontMetricsF,
@@ -23,7 +26,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QGraphicsItem,
     QGraphicsLineItem,
     QGraphicsPathItem,
@@ -32,11 +34,9 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
-    QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -46,7 +46,7 @@ from data.doors_sprite_data import ITEM_SHEET_PATH
 from data.room_bounds import room_bounds
 from data.worlds_data import World
 from gui.Doors.graph_model import THUMB, Edge, GraphModel, TileState
-from gui.Doors.layout import LINK_GAP, convex_hull
+from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
     DOORS,
     DUNGEON_BACKGROUNDS,
@@ -78,7 +78,18 @@ if TYPE_CHECKING:
     from DoorsTracker import MainWindow
 
 MIN_ZOOM, MAX_ZOOM = 0.1, 4.0
+# Settings that are attributes of the model: setting -> attribute
+MODEL_OPTIONS = {
+    "show_all_doors": "show_all_doors",
+    "auto_join": "auto_join",
+    "circle_repulsion": "circle_repulsion",
+    "spacing": "spacing",
+    "dead_end_pull": "leaf_pull",
+}
 WORLD = 1_000_000  # scene half-extent
+# A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
+# shifts by less than this on every solver step, which would otherwise redraw everything
+STILL = 0.1
 
 
 @dataclass(frozen=True)
@@ -252,7 +263,7 @@ class RoomItem(QGraphicsItem):
         painter.setPen(QPen(self.colour, 2))
         painter.drawPath(self.outline)
 
-        if lod * 11 >= 5 and self.page.labels_box.isChecked():
+        if lod * 11 >= 5 and self.page.top.settings["labels"]:
             font = QFont()
             font.setPixelSize(11)
             font.setBold(True)
@@ -326,12 +337,19 @@ class LabelItem(QGraphicsItem):
 
 
 class ReachItem(QGraphicsItem):
-    """Debug overlay of repulsion shapes. Dashed outline = shape grown by half the reach; overlap means repulsion."""
+    """Debug overlay of what pushes blocks apart.
+
+    Each outline is a shape grown by half a reach, so two blocks push when the same kind of outline overlaps.
+    Solid: the push between rooms. Dashed: the push between circles, when repelling by circle.
+    Hatched: a pinned or held block, which pushes but is not moved.
+    """
 
     def __init__(self, page: GraphPage):
         super().__init__()
         self.page = page
         self.shapes = []
+        self.outlines: list[QPainterPath] = []  # of the push between rooms, one per shape
+        self._merged: dict[tuple, QPainterPath] = {}  # see _outline
         self.bounds = QRectF()
         self.setZValue(0.5)
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -339,6 +357,7 @@ class ReachItem(QGraphicsItem):
     def refresh(self):
         self.prepareGeometryChange()
         self.shapes = self.page.model.repulsion_shapes()
+        self.outlines = [self._outline(shape) for shape in self.shapes]
         bounds = QRectF()
         for shape in self.shapes:
             for left, top, right, bottom in shape.boxes:
@@ -346,7 +365,7 @@ class ReachItem(QGraphicsItem):
             if shape.circle:
                 x, y, radius = shape.circle
                 bounds = bounds.united(QRectF(x - radius, y - radius, radius * 2, radius * 2))
-        reach = max((shape.reach for shape in self.shapes), default=0.0)
+        reach = max((max(shape.reach, shape.contact) for shape in self.shapes), default=0.0)
         self.bounds = bounds.adjusted(-reach, -reach, reach, reach)
         self.update()
 
@@ -356,29 +375,43 @@ class ReachItem(QGraphicsItem):
     def shape(self):
         return QPainterPath()
 
+    def _outline(self, shape) -> QPainterPath:
+        """A block's rooms grown by half the push's reach. Rounded, as the solver measures the gap between two rooms.
+
+        Merging the rooms into one outline is slow, and a block keeps its shape as it moves: each shape is
+        merged once and after that only moved.
+        """
+        x0, y0 = shape.boxes[0][:2]
+        boxes = tuple((round(left - x0, 2), round(top - y0, 2), round(right - x0, 2), round(bottom - y0, 2)) for left, top, right, bottom in shape.boxes)
+        merged = self._merged.get((shape.contact, boxes))
+        if merged is None:
+            reach, half = shape.contact, shape.contact / 2
+            path = QPainterPath()
+            path.setFillRule(Qt.FillRule.WindingFill)
+            for left, top, right, bottom in boxes:
+                path.addRoundedRect(QRectF(left - half, top - half, right - left + reach, bottom - top + reach), half, half)
+            merged = self._merged[shape.contact, boxes] = path.simplified()
+        return merged.translated(x0, y0)
+
     def paint(self, painter, option, widget=None):
-        solid = QPen(QColor(255, 255, 255, 200), 0)
-        dashed = QPen(QColor(255, 255, 255, 200), 0, Qt.PenStyle.DashLine)
-        fill = QColor(255, 255, 255, 28)
-        for shape in self.shapes:
-            reach, half = shape.reach, shape.reach / 2
+        stiff = QPen(QColor(255, 200, 90, 230), 0)
+        soft = QPen(QColor(255, 255, 255, 200), 0, Qt.PenStyle.DashLine)
+        faint = QPen(QColor(255, 255, 255, 110), 0, Qt.PenStyle.DotLine)
+        for shape, outline in zip(self.shapes, self.outlines):
+            fill = QBrush(QColor(255, 255, 255, 110), Qt.BrushStyle.BDiagPattern) if shape.fixed else QBrush(QColor(255, 255, 255, 28))
             if shape.circle:
                 x, y, radius = shape.circle
                 painter.setBrush(fill)
-                painter.setPen(dashed)
-                painter.drawEllipse(QPointF(x, y), radius + half, radius + half)
+                painter.setPen(soft)
+                painter.drawEllipse(QPointF(x, y), radius + shape.reach / 2, radius + shape.reach / 2)
+                # The circle itself
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(solid)
+                painter.setPen(faint)
                 painter.drawEllipse(QPointF(x, y), radius, radius)
             else:
-                # Rooms grown by half the reach
-                grown = QPainterPath()
-                grown.setFillRule(Qt.FillRule.WindingFill)
-                for left, top, right, bottom in shape.boxes:
-                    grown.addRoundedRect(QRectF(left - half, top - half, right - left + reach, bottom - top + reach), half, half)
                 painter.setBrush(fill)
-                painter.setPen(dashed)
-                painter.drawPath(grown.simplified())
+            painter.setPen(stiff)
+            painter.drawPath(outline)
 
 
 class DoorsItem(QGraphicsItem):
@@ -492,17 +525,6 @@ class IconItem(QGraphicsItem):
                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, self.lobby.replace("_", " "))
 
 
-class HullItem(QGraphicsPolygonItem):
-    """Outline around the supertiles of one original dungeon, when grouping by dungeon."""
-
-    def __init__(self, members: list[Node], colour: str):
-        super().__init__()
-        self.members = members
-        self.setPen(QPen(QColor(lighten(colour, 0.35)), 2))
-        self.setBrush(QColor(lighten(colour, 0.82)))
-        self.setZValue(0)
-
-
 class LinkItem(QGraphicsPathItem):
     """A link, interior connection, drop or warp between two doors."""
 
@@ -515,6 +537,23 @@ class LinkItem(QGraphicsPathItem):
         self.dashed = edge.kind is EdgeKind.WARP
         self.colour = QColor("#222") if self.interior else QColor(colour)
         self.arrow = None
+        # Worked out once: a link is made anew whenever the map's data changes, and its path is redrawn
+        # every time either room moves
+        model = page.model
+        a, b = edge.a, edge.b
+        self.node_a, self.node_b = model.rooms.node(a), model.rooms.node(b)
+        self.offset_a, self.offset_b = model.port_offset(a), model.port_offset(b)
+        self.facing_a = door_vector(a) if not model.is_hidden_dark(self.node_a.tile) else None
+        self.facing_b = door_vector(b) if not model.is_hidden_dark(self.node_b.tile) else None
+        self.same_block = model.blocks.root.get(self.node_a) == model.blocks.root.get(self.node_b)
+        if edge.kind in (EdgeKind.WARP, EdgeKind.HOLE, EdgeKind.DROP):
+            self.one_way = not edge.both_ways
+        else:
+            self.one_way = not self.interior and (
+                model.decoupled() or (door_vector(a) is None and "Stairs" not in a and "Ladder" not in a)
+            )
+        # Tracked drops can be stored either way round; the arrow always points pit -> landing
+        self.backwards = not model.decoupled() and door_direction(a) == "Up" and door_direction(b) == "Dn"
         self.setZValue(2)
         self.set_state(faded=False, strong=False)
         self.update_path()
@@ -535,26 +574,21 @@ class LinkItem(QGraphicsPathItem):
         self.setZValue(2.5 if strong else 2)
 
     def update_path(self):
-        model = self.page.model
-        edge = self.edge
-        a, b = edge.a, edge.b
-        ax, ay = model.port(a)
-        bx, by = model.port(b)
+        pos = self.page.model.pos
+        ax, ay = pos[self.node_a][0] + self.offset_a[0], pos[self.node_a][1] + self.offset_a[1]
+        bx, by = pos[self.node_b][0] + self.offset_b[0], pos[self.node_b][1] + self.offset_b[1]
         dist = math.hypot(bx - ax, by - ay)
         reach = min(60.0, dist / 2.2)
-        node_a, node_b = model.rooms.node(a), model.rooms.node(b)
-        if node_a == node_b:
+        if self.node_a == self.node_b:
             reach = max(reach, 30.0)
-        da = door_vector(a) if not model.is_hidden_dark(node_a.tile) else None
-        db = door_vector(b) if not model.is_hidden_dark(node_b.tile) else None
+        da, db = self.facing_a, self.facing_b
         path = QPainterPath(QPointF(ax, ay))
         # Control points out from each door that faces a direction
         c1 = QPointF(ax + da[0] * reach, ay + da[1] * reach) if da else None
         c2 = QPointF(bx + db[0] * reach, by + db[1] * reach) if db else None
         end = QPointF(bx, by)
-        same_block = model.blocks.root.get(node_a) == model.blocks.root.get(node_b)
         if c1 is not None and c2 is not None:
-            if same_block and not self.interior and dist > 1:
+            if self.same_block and not self.interior and dist > 1:
                 # Same block: the plain curve would be a straight line, so bow it sideways
                 px, py = -(by - ay) / dist, (bx - ax) / dist
                 if py < 0 or (py == 0 and px < 0):
@@ -571,19 +605,9 @@ class LinkItem(QGraphicsPathItem):
             path.lineTo(end)
         self.setPath(path)
 
-        if edge.kind in (EdgeKind.WARP, EdgeKind.HOLE, EdgeKind.DROP):
-            one_way = not edge.both_ways
-        else:
-            one_way = not self.interior and (
-                model.decoupled() or (door_vector(a) is None and "Stairs" not in a and "Ladder" not in a)
-            )
-        if one_way:
-            # Tracked drops can be stored either way round; the arrow always points pit -> landing
-            backwards = (
-                not model.decoupled() and door_direction(a) == "Up" and door_direction(b) == "Dn"
-            )
-            tip_x, tip_y = (ax, ay) if backwards else (bx, by)
-            tail = path.pointAtPercent(0.08 if backwards else 0.92) if dist > 1 else QPointF(bx, by)
+        if self.one_way:
+            tip_x, tip_y = (ax, ay) if self.backwards else (bx, by)
+            tail = path.pointAtPercent(0.08 if self.backwards else 0.92) if dist > 1 else QPointF(bx, by)
             angle = math.atan2(tip_y - tail.y(), tip_x - tail.x())
             head = QPolygonF(
                 [
@@ -663,6 +687,7 @@ class GraphView(QGraphicsView):
         # centerOn rounds to whole pixels; correct the remainder
         centre = self.mapToScene(self.viewport().rect().center())
         self.translate(centre.x() - x, centre.y() - y)
+        self.page.top.map_changed()
 
     def zoom_at(self, view_pos, factor):
         """Zoom about a viewport point."""
@@ -671,9 +696,11 @@ class GraphView(QGraphicsView):
         self.scale(factor, factor)
         after = self.mapToScene(view_pos)
         self.translate(after.x() - before.x(), after.y() - before.y())
+        self.page.top.map_changed()
 
     def pan(self, dx, dy):
         self.translate(dx / self.zoom(), dy / self.zoom())
+        self.page.top.map_changed()
 
     def fit(self, bounds):
         x0, y0, x1, y1 = bounds
@@ -681,6 +708,18 @@ class GraphView(QGraphicsView):
         size = self.viewport().size()
         zoom = min(size.width() / (x1 - x0 + pad * 2), size.height() / (y1 - y0 + pad * 2))
         self.set_camera((x0 + x1) / 2, (y0 + y1) / 2, min(1.0, zoom))
+
+    # ---- timing, for Show FPS
+
+    # The background is drawn first and the foreground last. Timing between them leaves out the wait for the
+    # screen's refresh, which is spent before and after
+    def drawBackground(self, painter, rect):
+        self._draw_began = time.perf_counter()
+        super().drawBackground(painter, rect)
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        self.page.frame_drawn((time.perf_counter() - self._draw_began) * 1000)
 
     # ---- input, forwarded to the page
 
@@ -719,14 +758,16 @@ class GraphView(QGraphicsView):
 
 
 class GraphPage(QWidget):
-    """One dungeon tab: toolbar, view and input handling."""
+    """One dungeon tab: view and input handling."""
 
     def __init__(self, top: MainWindow, tab_world: World, assets: Assets, use_gl: bool = True):
         super().__init__()
         self.top = top
         self.tab_world = tab_world
         self.assets = assets
-        self.model = GraphModel(tab_world, top.experimental_flags)
+        self.model = GraphModel(tab_world, top.settings)
+        for name, attribute in MODEL_OPTIONS.items():
+            setattr(self.model, attribute, top.settings[name])
         self.dungeon_name = self.model.dungeon_name
 
         background = QColor(DUNGEON_BACKGROUNDS.get(self.dungeon_name, BACKGROUND))
@@ -739,122 +780,114 @@ class GraphPage(QWidget):
         self._doors: dict[Node, DoorsItem] = {}
         self._labels: dict[Node, LabelItem] = {}
         self._links: list[LinkItem] = []
-        self._hulls: list[HullItem] = []
+        self._drawn_at: dict[Node, tuple[float, float]] = {}  # where each room's items were last put
         self._reach: ReachItem | None = None
         self._rubber: QGraphicsLineItem | None = None
         self._needs_fit = True
         self._settling_size = False
+        self._forces_stale = False  # a force setting changed while this tab was hidden
 
         self.scene = QGraphicsScene(self)
         self.scene.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
         self.view = GraphView(self, use_gl=use_gl)
 
-        self._build_toolbar()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.view, 1)
-
-        self.timer = QTimer(self)
-        self.timer.setInterval(15)
-        self.timer.timeout.connect(self._tick)
-        self.rebuild()
-
-    # ------------------------------------------------------------------ toolbar
-
-    def _build_toolbar(self):
-        self.toolbar = QWidget()
-        row = QHBoxLayout(self.toolbar)
-        row.setContentsMargins(6, 3, 6, 3)
+        self.status = top.status
+        # These act on this tab only, so they are not on the window's toolbar: they float over a corner of the map
+        panel = QWidget(self.view)
+        panel.setAutoFillBackground(True)
+        buttons = QHBoxLayout(panel)
+        buttons.setContentsMargins(3, 3, 3, 3)
+        buttons.setSpacing(3)
         fit = QPushButton("Fit")
         fit.clicked.connect(self.fit_view)
         relayout = QPushButton("Re-layout")
         relayout.clicked.connect(self.relayout)
-        self.group_box = QCheckBox("Group by original dungeon")
-        self.group_box.toggled.connect(self._on_group)
-        self.join_box = QCheckBox("Join fitting rooms")
-        self.join_box.setChecked(True)
-        self.join_box.toggled.connect(self._on_join)
-        self.spacing_slider = QSlider(Qt.Orientation.Horizontal)
-        self.spacing_slider.setRange(10, 200)
-        self.spacing_slider.setValue(int(self.model.spacing))
-        self.spacing_slider.setFixedWidth(120)
-        self.spacing_slider.valueChanged.connect(self._on_spacing)
-        self.pull_slider = QSlider(Qt.Orientation.Horizontal)
-        self.pull_slider.setRange(10, 40)
-        self.pull_slider.setValue(int(self.model.leaf_pull * 10))
-        self.pull_slider.setFixedWidth(80)
-        self.pull_slider.valueChanged.connect(self._on_pull)
-        self.simulate_box = QCheckBox("Simulate")
-        self.simulate_box.toggled.connect(self._on_simulate)
-        self.circle_box = QCheckBox("Circle repulsion")
-        self.circle_box.setToolTip("Experiment: each block repels as one circle around all its rooms")
-        self.circle_box.toggled.connect(self._on_circle)
-        self.reach_box = QCheckBox("Show repulsion")
-        self.reach_box.setToolTip("Draw what each block repels as. Blocks push each other when their dashed outlines overlap")
-        self.reach_box.toggled.connect(self._on_reach)
-        self.follow_box = QCheckBox("Follow player")
-        self.labels_box = QCheckBox("Labels")
-        self.labels_box.setChecked(True)
-        self.labels_box.toggled.connect(self._on_labels)
-        self.status = QLabel("")
-        self.status.setMinimumWidth(50)
-        for widget in (fit, relayout, self.group_box, self.join_box):
-            row.addWidget(widget)
-        row.addWidget(QLabel("Spacing"))
-        row.addWidget(self.spacing_slider)
-        row.addWidget(QLabel("Satellite pull"))
-        row.addWidget(self.pull_slider)
-        row.addWidget(self.circle_box)
-        row.addWidget(self.reach_box)
-        row.addWidget(self.simulate_box)
-        row.addWidget(self.follow_box)
-        row.addWidget(self.labels_box)
-        row.addWidget(self.status, 1)
+        buttons.addWidget(fit)
+        buttons.addWidget(relayout)
+        panel.adjustSize()
+        # View -> Show FPS. The readout is on the window's toolbar: a widget over the map makes the map
+        # redraw whenever it changes, which would add to the count
+        self._frames: deque[float] = deque()  # when each frame of the last second was drawn
+        self._draw_ms = 0.0  # how long the last frame took to draw
+        self._fps_timer = QTimer(self)
+        self._fps_timer.setInterval(250)
+        self._fps_timer.timeout.connect(self._show_fps)
+        if top.settings["show_fps"]:
+            self._fps_timer.start()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.view)
 
-    def _on_labels(self, checked):
-        for label in self._labels.values():
-            label.setVisible(checked)
-        self.scene.update()
+        self.timer = QTimer(self)
+        self.timer.setInterval(15)
+        self.timer.timeout.connect(self._tick)
+        if top.settings["simulate"]:
+            self.timer.start()
+        self.rebuild()
 
-    def _on_group(self, checked):
-        self.model.group_by_dungeon = checked
-        self.relayout()
+    # ---------------------------------------------------------------------- fps
 
-    def _on_join(self, checked):
-        self.model.auto_join = checked
-        self.relayout()
+    def frame_drawn(self, milliseconds: float) -> None:
+        """The view has drawn the map once, in this long."""
+        if self.top.settings["show_fps"]:
+            self._frames.append(time.perf_counter())
+            self._draw_ms = milliseconds
 
-    def _on_spacing(self, value):
-        self.model.spacing = float(value)
-        self._forces_changed()
+    def _show_fps(self) -> None:
+        if not self.isVisible():
+            return
+        since = time.perf_counter() - 1
+        while self._frames and self._frames[0] < since:
+            self._frames.popleft()
+        self.top.fps_label.setText(f"{len(self._frames)} fps  {self._draw_ms:.1f} ms")
 
-    def _on_reach(self, checked):
-        if self._reach is not None:
-            self._reach.setVisible(checked)
-            if checked:
-                self._reach.refresh()
+    # ------------------------------------------------------------------ options
 
-    def _on_circle(self, checked):
-        self.model.circle_repulsion = checked
-        self._forces_changed()
-
-    def _on_pull(self, value):
-        self.model.leaf_pull = value / 10
-        self._forces_changed()
+    def option_changed(self, name: str) -> None:
+        """Act on a setting the window has just changed."""
+        value = self.top.settings[name]
+        if name in MODEL_OPTIONS:
+            setattr(self.model, MODEL_OPTIONS[name], value)
+        if name == "labels":
+            for label in self._labels.values():
+                label.setVisible(value)
+            self.scene.update()
+        elif name == "show_repulsion":
+            if self._reach is not None:
+                self._reach.setVisible(value)
+                if value:
+                    self._reach.refresh()
+        elif name == "simulate":
+            if value:
+                self.timer.start()
+            else:
+                self.timer.stop()
+        elif name in ("spacing", "dead_end_pull", "circle_repulsion"):
+            if self.isVisible():
+                self._forces_changed()
+            else:
+                # Settled when the tab is next shown, not on every step of a slider
+                self._forces_stale = True
+        elif name in ("auto_join", "trim_rooms", "split_rooms"):
+            # These change which blocks there are, or their shapes
+            self.relayout()
+        elif name == "show_fps":
+            if value:
+                self._fps_timer.start()
+            else:
+                self._fps_timer.stop()
+        elif name != "follow_player":
+            self.redraw_canvas()
 
     def _forces_changed(self):
         """Settle now unless the simulation is running."""
-        if not self.simulate_box.isChecked():
+        self._forces_stale = False
+        if not self.top.settings["simulate"]:
             self.model.settle(150)
             self.update_positions()
-
-    def _on_simulate(self, checked):
-        if checked:
-            self.timer.start()
-        else:
-            self.timer.stop()
+        # The reach changed even if no room moved
+        self._refresh_reach()
+        self.top.map_changed()
 
     def _tick(self):
         if not self.isVisible():
@@ -869,22 +902,14 @@ class GraphPage(QWidget):
         model = self.model
         self.scene.clear()
         self._reach = ReachItem(self)
-        self._reach.setVisible(self.reach_box.isChecked())
+        self._reach.setVisible(self.top.settings["show_repulsion"])
         self.scene.addItem(self._reach)
-        self._rooms, self._doors, self._links, self._hulls = {}, {}, [], []
+        self._rooms, self._doors, self._links = {}, {}, []
+        self._drawn_at = {}
         self._labels = {}
         self._rubber = None
         self._focus = None
         self.hot_door = None
-
-        if model.group_by_dungeon:
-            by_dungeon: dict[str | None, list[Node]] = {}
-            for node in model.nodes():
-                by_dungeon.setdefault(supertile(node.tile).dungeon, []).append(node)
-            for dungeon, members in by_dungeon.items():
-                hull = HullItem(members, dungeon_colour(dungeon))
-                self.scene.addItem(hull)
-                self._hulls.append(hull)
 
         lobbies = {x.door: x.lobby for x in model.lobby_doors}
         for node in model.nodes():
@@ -896,7 +921,7 @@ class GraphPage(QWidget):
             self._doors[node] = doors
             if not room.compact:
                 label = LabelItem(room)
-                label.setVisible(self.labels_box.isChecked())
+                label.setVisible(self.top.settings["labels"])
                 self.scene.addItem(label)
                 self._labels[node] = label
 
@@ -949,31 +974,30 @@ class GraphPage(QWidget):
         self.update_positions(links=False)
         if self._needs_fit and model.pos and self.view.viewport().width() > 50 and self.isVisible():
             self.fit_view()
+        self.top.map_changed()
 
     def update_positions(self, links: bool = True) -> None:
-        """Move existing items to the model's positions. The per-frame path."""
+        """Move existing items to the model's positions. The per-frame path: only what moved is touched."""
         model = self.model
+        moved = set()
         for node, room in self._rooms.items():
             if node in model.pos:
                 x, y = model.pos[node]
+                drawn = self._drawn_at.get(node)
+                if drawn is not None and abs(drawn[0] - x) < STILL and abs(drawn[1] - y) < STILL:
+                    continue
+                self._drawn_at[node] = (x, y)
+                moved.add(node)
                 room.setPos(x, y)
                 self._doors[node].setPos(x, y)
                 if node in self._labels:
                     self._labels[node].setPos(x, y)
         if links:
             for link in self._links:
-                link.update_path()
-        if self._reach is not None and self._reach.isVisible():
-            self._reach.refresh()
-        for hull in self._hulls:
-            points = []
-            for node in hull.members:
-                x, y = model.pos[node]
-                left, top, right, bottom = model.box(node)
-                for px in (left - 16, right + 16):
-                    for py in (top - 16, bottom + 16):
-                        points.append((x + px, y + py))
-            hull.setPolygon(QPolygonF([QPointF(px, py) for px, py in convex_hull(points)]))
+                if link.node_a in moved or link.node_b in moved:
+                    link.update_path()
+        if moved:
+            self._refresh_reach()
         if self._rubber is not None and self.selected_door:
             line = self._rubber.line()
             start = model.port(self.selected_door)
@@ -985,6 +1009,8 @@ class GraphPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if self._forces_stale:
+            self._forces_changed()
         if self._needs_fit and self.model.pos:
             # A tab not yet shown has no real size: refit on resize until the user moves the camera
             self._settling_size = True
@@ -1113,10 +1139,14 @@ class GraphPage(QWidget):
         zoom = self.view.zoom()
         self.model.drag(press.node, delta.x() / zoom, delta.y() / zoom)
         self.update_positions()
+        self.top.map_changed()
 
     def on_release(self, event):
         press, self._press = self._press, None
         self.model.drop()
+        if press is not None and press.moved:
+            # The dropped block is no longer held
+            self._refresh_reach()
         if press is None or event.button() != Qt.MouseButton.LeftButton or press.moved:
             return
         if press.hit.door is not None:
@@ -1295,12 +1325,20 @@ class GraphPage(QWidget):
             if member in self._rooms:
                 self._rooms[member].pinned = pinned
                 self._rooms[member].update()
+        self._refresh_reach()
+        self.top.map_changed()
 
     def unpin_all(self):
         self.model.unpin_all()
         for room in self._rooms.values():
             room.pinned = False
             room.update()
+        self._refresh_reach()
+        self.top.map_changed()
+
+    def _refresh_reach(self):
+        if self._reach is not None and self._reach.isVisible():
+            self._reach.refresh()
 
     def remove_tile(self, tile: Tile) -> None:
         # Also removes its links, lobbies and icons: confirm first
@@ -1331,14 +1369,6 @@ class GraphPage(QWidget):
     def tiles(self) -> dict[Tile, TileState]:
         return self.model.tiles
 
-    @property
-    def show_all_doors(self):
-        return self.model.show_all_doors
-
-    @show_all_doors.setter
-    def show_all_doors(self, value):
-        self.model.show_all_doors = value
-
     def init_page(self):
         self.model.reset()
         self.selected_door = None
@@ -1348,12 +1378,6 @@ class GraphPage(QWidget):
     def load_yaml(self, data):
         had_positions = self.model.load(data)
         self.selected_door = None
-        self.spacing_slider.blockSignals(True)
-        self.pull_slider.blockSignals(True)
-        self.spacing_slider.setValue(int(self.model.spacing))
-        self.pull_slider.setValue(int(self.model.leaf_pull * 10))
-        self.spacing_slider.blockSignals(False)
-        self.pull_slider.blockSignals(False)
         camera = data.get("camera")
         self._needs_fit = not (camera and had_positions)
         self.rebuild()
@@ -1410,7 +1434,7 @@ class GraphPage(QWidget):
             if changed in self._rooms:
                 self._rooms[changed].update()
                 self._doors[changed].update()
-        if previous != node and self.follow_box.isChecked() and node in model.pos:
+        if previous != node and self.top.settings["follow_player"] and node in model.pos:
             # Follow player: recentre when the room is not fully visible
             cx, cy, zoom = self.view.camera()
             size = self.view.viewport().size()
