@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -707,6 +709,18 @@ class GraphView(QGraphicsView):
         zoom = min(size.width() / (x1 - x0 + pad * 2), size.height() / (y1 - y0 + pad * 2))
         self.set_camera((x0 + x1) / 2, (y0 + y1) / 2, min(1.0, zoom))
 
+    # ---- timing, for Show FPS
+
+    # The background is drawn first and the foreground last. Timing between them leaves out the wait for the
+    # screen's refresh, which is spent before and after
+    def drawBackground(self, painter, rect):
+        self._draw_began = time.perf_counter()
+        super().drawBackground(painter, rect)
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        self.page.frame_drawn((time.perf_counter() - self._draw_began) * 1000)
+
     # ---- input, forwarded to the page
 
     def resizeEvent(self, event):
@@ -791,6 +805,15 @@ class GraphPage(QWidget):
         buttons.addWidget(fit)
         buttons.addWidget(relayout)
         panel.adjustSize()
+        # View -> Show FPS. The readout is on the window's toolbar: a widget over the map makes the map
+        # redraw whenever it changes, which would add to the count
+        self._frames: deque[float] = deque()  # when each frame of the last second was drawn
+        self._draw_ms = 0.0  # how long the last frame took to draw
+        self._fps_timer = QTimer(self)
+        self._fps_timer.setInterval(250)
+        self._fps_timer.timeout.connect(self._show_fps)
+        if top.settings["show_fps"]:
+            self._fps_timer.start()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.view)
@@ -801,6 +824,22 @@ class GraphPage(QWidget):
         if top.settings["simulate"]:
             self.timer.start()
         self.rebuild()
+
+    # ---------------------------------------------------------------------- fps
+
+    def frame_drawn(self, milliseconds: float) -> None:
+        """The view has drawn the map once, in this long."""
+        if self.top.settings["show_fps"]:
+            self._frames.append(time.perf_counter())
+            self._draw_ms = milliseconds
+
+    def _show_fps(self) -> None:
+        if not self.isVisible():
+            return
+        since = time.perf_counter() - 1
+        while self._frames and self._frames[0] < since:
+            self._frames.popleft()
+        self.top.fps_label.setText(f"{len(self._frames)} fps  {self._draw_ms:.1f} ms")
 
     # ------------------------------------------------------------------ options
 
@@ -832,6 +871,11 @@ class GraphPage(QWidget):
         elif name in ("auto_join", "trim_rooms", "split_rooms"):
             # These change which blocks there are, or their shapes
             self.relayout()
+        elif name == "show_fps":
+            if value:
+                self._fps_timer.start()
+            else:
+                self._fps_timer.stop()
         elif name != "follow_player":
             self.redraw_canvas()
 

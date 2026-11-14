@@ -53,6 +53,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "window": None,  # QWidget.saveGeometry(), as hex
     # View and Experimental menus
     "show_all_doors": False,
+    "show_fps": False,
     "hide_single_route_tiles": False,
     "decoupled_doors": False,
     "vanilla_drops": True,
@@ -280,6 +281,7 @@ class MainWindow(QMainWindow):
         experimental = bar.addMenu("Experimental")
         for menu, label, name in (
             (view_menu, "Show All Doors", "show_all_doors"),
+            (view_menu, "Show FPS", "show_fps"),
             (experimental, "Hide Single Route Tiles", "hide_single_route_tiles"),
             (experimental, "Enable Decoupled Support", "decoupled_doors"),
             (experimental, "Drops Are Not Shuffled", "vanilla_drops"),
@@ -338,6 +340,11 @@ class MainWindow(QMainWindow):
         self.status = QLabel("")  # what the mouse is over
         self.status.setMinimumWidth(50)
         row.addWidget(self.status, 1)
+        # View -> Show FPS: frames the tab in view drew in the last second, and how long the last one took
+        self.fps_label = QLabel("")
+        self.fps_label.setMinimumWidth(self.fps_label.fontMetrics().horizontalAdvance("000 fps  00.0 ms") + 8)
+        self.fps_label.setVisible(self.settings["show_fps"])
+        row.addWidget(self.fps_label)
         return toolbar
 
     def set_setting(self, name: str, value: Any) -> None:
@@ -357,6 +364,8 @@ class MainWindow(QMainWindow):
     def set_option(self, name: str, value: bool | float) -> None:
         """Change a setting the pages act on, in every tab."""
         self.set_setting(name, value)
+        if name == "show_fps":
+            self.fps_label.setVisible(bool(value))
         for page in self.pages.values():
             page.option_changed(name)
 
