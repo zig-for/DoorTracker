@@ -188,6 +188,9 @@ class GraphModel:
         self._seam_doors: set[str] = set()
         self._linked_doors: set[str] = set()
         self._piece_cache: dict[Node, list[Box]] = {}
+        # Solver inputs that only change when the blocks are rebuilt; see _build_blocks
+        self._settle_springs: list[layout.Spring] | None = None
+        self._body_rects: dict[Node, list[layout.Rect]] = {}  # by block root
         for tile in mandatory_tiles[self.tab_world]:
             self._ensure_tile(tile)
         self.update()
@@ -216,7 +219,10 @@ class GraphModel:
         """Run the solver in place for some iterations."""
         if not self.pos:
             return
-        self._relax(iterations=iterations, old_mobility=1.0, edges=self._layout_edges(), cold=True)
+        if self._settle_springs is None:
+            # The same until the blocks are next rebuilt, and slow to work out: Simulate settles 60 times a second
+            self._settle_springs = self._springs(self._layout_edges())
+        self._relax(iterations=iterations, old_mobility=1.0, springs=self._settle_springs, cold=True)
 
     def _refresh_door_sets(self) -> None:
         self._seam_doors = set()
@@ -926,6 +932,8 @@ class GraphModel:
 
     def _build_blocks(self) -> None:
         self.blocks = self._compute_blocks(self._join_order())
+        self._settle_springs = None
+        self._body_rects = {}
 
     def _optimise_join_order(self) -> None:
         """Random search for the order that joins the most links. Full re-layout only."""
@@ -1106,16 +1114,17 @@ class GraphModel:
                 pending.discard(root)
 
         self.unsettled |= set(new_nodes)
+        springs = self._springs(edges)
         if not full:
             # Incremental: move only the new blocks
-            self._relax(iterations=90, old_mobility=0.0, edges=edges, cold=True)
+            self._relax(iterations=90, old_mobility=0.0, springs=springs, cold=True)
             # then separate overlaps
-            self._relax(iterations=0, old_mobility=1.0, edges=edges, cold=True)
+            self._relax(iterations=0, old_mobility=1.0, springs=springs, cold=True)
         else:
             # Stress for the global shape, then forces to shorten links and separate overlaps
             self._stress_layout(edges)
-            self._relax(iterations=180, old_mobility=1.0, edges=edges, improve=True)
-            self._relax(iterations=150, old_mobility=1.0, edges=edges, cold=True)
+            self._relax(iterations=180, old_mobility=1.0, springs=springs, improve=True)
+            self._relax(iterations=150, old_mobility=1.0, springs=springs, cold=True)
             self._park_unlinked(edges)
         self._laid_spacing = self.spacing
 
@@ -1181,11 +1190,13 @@ class GraphModel:
         """Blocks as layout.Body, in blocks.members order. Unsettled blocks are free; the rest get old_mobility."""
         bodies = []
         for root, members in self.blocks.members.items():
-            rects = []
-            for m in members:
-                ox, oy = self.blocks.offset[m]
-                for left, top, right, bottom in self.pieces(m):
-                    rects.append((ox + (left + right) / 2, oy + (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2))
+            rects = self._body_rects.get(root)
+            if rects is None:
+                rects = self._body_rects[root] = []
+                for m in members:
+                    ox, oy = self.blocks.offset[m]
+                    for left, top, right, bottom in self.pieces(m):
+                        rects.append((ox + (left + right) / 2, oy + (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2))
             if any(m in self.fixed or m in self.held for m in members):
                 mobility = 0.0
             elif all(m in self.unsettled for m in members):
@@ -1245,14 +1256,16 @@ class GraphModel:
             if free:
                 self._place_block(root, x + self.blocks.offset[root][0], y + self.blocks.offset[root][1])
 
-    def _relax(self, iterations: int, old_mobility: float, edges: list[Edge], improve: bool = False, cold: bool = False) -> float:
+    def _relax(
+        self, iterations: int, old_mobility: float, springs: list[layout.Spring], improve: bool = False, cold: bool = False
+    ) -> float:
         """Run the force solver on the current positions. Returns total link length."""
         roots = list(self.blocks.members)
         xs, ys, cost, self._last_step = layout.relax(
             self._bodies(old_mobility),
             [self.pos[r][0] for r in roots],
             [self.pos[r][1] for r in roots],
-            self._springs(edges),
+            springs,
             iterations=iterations,
             spacing=self.spacing,
             leaf_pull=self.leaf_pull,

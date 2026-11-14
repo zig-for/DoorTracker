@@ -85,6 +85,9 @@ MODEL_OPTIONS = {
     "dead_end_pull": "leaf_pull",
 }
 WORLD = 1_000_000  # scene half-extent
+# A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
+# shifts by less than this on every solver step, which would otherwise redraw everything
+STILL = 0.1
 
 
 @dataclass(frozen=True)
@@ -532,6 +535,23 @@ class LinkItem(QGraphicsPathItem):
         self.dashed = edge.kind is EdgeKind.WARP
         self.colour = QColor("#222") if self.interior else QColor(colour)
         self.arrow = None
+        # Worked out once: a link is made anew whenever the map's data changes, and its path is redrawn
+        # every time either room moves
+        model = page.model
+        a, b = edge.a, edge.b
+        self.node_a, self.node_b = model.rooms.node(a), model.rooms.node(b)
+        self.offset_a, self.offset_b = model.port_offset(a), model.port_offset(b)
+        self.facing_a = door_vector(a) if not model.is_hidden_dark(self.node_a.tile) else None
+        self.facing_b = door_vector(b) if not model.is_hidden_dark(self.node_b.tile) else None
+        self.same_block = model.blocks.root.get(self.node_a) == model.blocks.root.get(self.node_b)
+        if edge.kind in (EdgeKind.WARP, EdgeKind.HOLE, EdgeKind.DROP):
+            self.one_way = not edge.both_ways
+        else:
+            self.one_way = not self.interior and (
+                model.decoupled() or (door_vector(a) is None and "Stairs" not in a and "Ladder" not in a)
+            )
+        # Tracked drops can be stored either way round; the arrow always points pit -> landing
+        self.backwards = not model.decoupled() and door_direction(a) == "Up" and door_direction(b) == "Dn"
         self.setZValue(2)
         self.set_state(faded=False, strong=False)
         self.update_path()
@@ -552,26 +572,21 @@ class LinkItem(QGraphicsPathItem):
         self.setZValue(2.5 if strong else 2)
 
     def update_path(self):
-        model = self.page.model
-        edge = self.edge
-        a, b = edge.a, edge.b
-        ax, ay = model.port(a)
-        bx, by = model.port(b)
+        pos = self.page.model.pos
+        ax, ay = pos[self.node_a][0] + self.offset_a[0], pos[self.node_a][1] + self.offset_a[1]
+        bx, by = pos[self.node_b][0] + self.offset_b[0], pos[self.node_b][1] + self.offset_b[1]
         dist = math.hypot(bx - ax, by - ay)
         reach = min(60.0, dist / 2.2)
-        node_a, node_b = model.rooms.node(a), model.rooms.node(b)
-        if node_a == node_b:
+        if self.node_a == self.node_b:
             reach = max(reach, 30.0)
-        da = door_vector(a) if not model.is_hidden_dark(node_a.tile) else None
-        db = door_vector(b) if not model.is_hidden_dark(node_b.tile) else None
+        da, db = self.facing_a, self.facing_b
         path = QPainterPath(QPointF(ax, ay))
         # Control points out from each door that faces a direction
         c1 = QPointF(ax + da[0] * reach, ay + da[1] * reach) if da else None
         c2 = QPointF(bx + db[0] * reach, by + db[1] * reach) if db else None
         end = QPointF(bx, by)
-        same_block = model.blocks.root.get(node_a) == model.blocks.root.get(node_b)
         if c1 is not None and c2 is not None:
-            if same_block and not self.interior and dist > 1:
+            if self.same_block and not self.interior and dist > 1:
                 # Same block: the plain curve would be a straight line, so bow it sideways
                 px, py = -(by - ay) / dist, (bx - ax) / dist
                 if py < 0 or (py == 0 and px < 0):
@@ -588,19 +603,9 @@ class LinkItem(QGraphicsPathItem):
             path.lineTo(end)
         self.setPath(path)
 
-        if edge.kind in (EdgeKind.WARP, EdgeKind.HOLE, EdgeKind.DROP):
-            one_way = not edge.both_ways
-        else:
-            one_way = not self.interior and (
-                model.decoupled() or (door_vector(a) is None and "Stairs" not in a and "Ladder" not in a)
-            )
-        if one_way:
-            # Tracked drops can be stored either way round; the arrow always points pit -> landing
-            backwards = (
-                not model.decoupled() and door_direction(a) == "Up" and door_direction(b) == "Dn"
-            )
-            tip_x, tip_y = (ax, ay) if backwards else (bx, by)
-            tail = path.pointAtPercent(0.08 if backwards else 0.92) if dist > 1 else QPointF(bx, by)
+        if self.one_way:
+            tip_x, tip_y = (ax, ay) if self.backwards else (bx, by)
+            tail = path.pointAtPercent(0.08 if self.backwards else 0.92) if dist > 1 else QPointF(bx, by)
             angle = math.atan2(tip_y - tail.y(), tip_x - tail.x())
             head = QPolygonF(
                 [
@@ -761,6 +766,7 @@ class GraphPage(QWidget):
         self._doors: dict[Node, DoorsItem] = {}
         self._labels: dict[Node, LabelItem] = {}
         self._links: list[LinkItem] = []
+        self._drawn_at: dict[Node, tuple[float, float]] = {}  # where each room's items were last put
         self._reach: ReachItem | None = None
         self._rubber: QGraphicsLineItem | None = None
         self._needs_fit = True
@@ -835,6 +841,8 @@ class GraphPage(QWidget):
         if not self.top.settings["simulate"]:
             self.model.settle(150)
             self.update_positions()
+        # The reach changed even if no room moved
+        self._refresh_reach()
         self.top.map_changed()
 
     def _tick(self):
@@ -853,6 +861,7 @@ class GraphPage(QWidget):
         self._reach.setVisible(self.top.settings["show_repulsion"])
         self.scene.addItem(self._reach)
         self._rooms, self._doors, self._links = {}, {}, []
+        self._drawn_at = {}
         self._labels = {}
         self._rubber = None
         self._focus = None
@@ -924,19 +933,27 @@ class GraphPage(QWidget):
         self.top.map_changed()
 
     def update_positions(self, links: bool = True) -> None:
-        """Move existing items to the model's positions. The per-frame path."""
+        """Move existing items to the model's positions. The per-frame path: only what moved is touched."""
         model = self.model
+        moved = set()
         for node, room in self._rooms.items():
             if node in model.pos:
                 x, y = model.pos[node]
+                drawn = self._drawn_at.get(node)
+                if drawn is not None and abs(drawn[0] - x) < STILL and abs(drawn[1] - y) < STILL:
+                    continue
+                self._drawn_at[node] = (x, y)
+                moved.add(node)
                 room.setPos(x, y)
                 self._doors[node].setPos(x, y)
                 if node in self._labels:
                     self._labels[node].setPos(x, y)
         if links:
             for link in self._links:
-                link.update_path()
-        self._refresh_reach()
+                if link.node_a in moved or link.node_b in moved:
+                    link.update_path()
+        if moved:
+            self._refresh_reach()
         if self._rubber is not None and self.selected_door:
             line = self._rubber.line()
             start = model.port(self.selected_door)
@@ -1083,6 +1100,9 @@ class GraphPage(QWidget):
     def on_release(self, event):
         press, self._press = self._press, None
         self.model.drop()
+        if press is not None and press.moved:
+            # The dropped block is no longer held
+            self._refresh_reach()
         if press is None or event.button() != Qt.MouseButton.LeftButton or press.moved:
             return
         if press.hit.door is not None:
