@@ -78,6 +78,8 @@ if TYPE_CHECKING:
     from DoorsTracker import MainWindow
 
 MIN_ZOOM, MAX_ZOOM = 0.1, 4.0
+# Settings that are attributes of the model, under the same names
+MODEL_OPTIONS = ("show_all_doors", "group_by_dungeon", "auto_join", "circle_repulsion")
 WORLD = 1_000_000  # scene half-extent
 
 
@@ -729,7 +731,9 @@ class GraphPage(QWidget):
         self.top = top
         self.tab_world = tab_world
         self.assets = assets
-        self.model = GraphModel(tab_world, top.experimental_flags)
+        self.model = GraphModel(tab_world, top.settings)
+        for name in MODEL_OPTIONS:
+            setattr(self.model, name, top.settings[name])
         self.dungeon_name = self.model.dungeon_name
 
         background = QColor(DUNGEON_BACKGROUNDS.get(self.dungeon_name, BACKGROUND))
@@ -762,6 +766,8 @@ class GraphPage(QWidget):
         self.timer = QTimer(self)
         self.timer.setInterval(15)
         self.timer.timeout.connect(self._tick)
+        if top.settings["simulate"]:
+            self.timer.start()
         self.rebuild()
 
     # ------------------------------------------------------------------ toolbar
@@ -775,10 +781,7 @@ class GraphPage(QWidget):
         relayout = QPushButton("Re-layout")
         relayout.clicked.connect(self.relayout)
         self.group_box = QCheckBox("Group by original dungeon")
-        self.group_box.toggled.connect(self._on_group)
         self.join_box = QCheckBox("Join fitting rooms")
-        self.join_box.setChecked(True)
-        self.join_box.toggled.connect(self._on_join)
         self.spacing_slider = QSlider(Qt.Orientation.Horizontal)
         self.spacing_slider.setRange(10, 200)
         self.spacing_slider.setValue(int(self.model.spacing))
@@ -790,17 +793,25 @@ class GraphPage(QWidget):
         self.pull_slider.setFixedWidth(80)
         self.pull_slider.valueChanged.connect(self._on_pull)
         self.simulate_box = QCheckBox("Simulate")
-        self.simulate_box.toggled.connect(self._on_simulate)
         self.circle_box = QCheckBox("Circle repulsion")
         self.circle_box.setToolTip("Experiment: each block repels as one circle around all its rooms")
-        self.circle_box.toggled.connect(self._on_circle)
         self.reach_box = QCheckBox("Show repulsion")
         self.reach_box.setToolTip("Draw what each block repels as. Blocks push each other when their dashed outlines overlap")
-        self.reach_box.toggled.connect(self._on_reach)
         self.follow_box = QCheckBox("Follow player")
         self.labels_box = QCheckBox("Labels")
-        self.labels_box.setChecked(True)
-        self.labels_box.toggled.connect(self._on_labels)
+        # Each checkbox shows a setting of the window's, which is the same in every tab
+        self._boxes = {
+            "group_by_dungeon": self.group_box,
+            "auto_join": self.join_box,
+            "circle_repulsion": self.circle_box,
+            "show_repulsion": self.reach_box,
+            "simulate": self.simulate_box,
+            "follow_player": self.follow_box,
+            "labels": self.labels_box,
+        }
+        for name, box in self._boxes.items():
+            box.setChecked(self.top.settings[name])
+            box.toggled.connect(lambda checked, name=name: self.top.set_option(name, checked))
         self.status = QLabel("")
         self.status.setMinimumWidth(50)
         for widget in (fit, relayout, self.group_box, self.join_box):
@@ -816,31 +827,41 @@ class GraphPage(QWidget):
         row.addWidget(self.labels_box)
         row.addWidget(self.status, 1)
 
-    def _on_labels(self, checked):
-        for label in self._labels.values():
-            label.setVisible(checked)
-        self.scene.update()
-
-    def _on_group(self, checked):
-        self.model.group_by_dungeon = checked
-        self.relayout()
-
-    def _on_join(self, checked):
-        self.model.auto_join = checked
-        self.relayout()
+    def option_changed(self, name: str) -> None:
+        """Act on a setting the window has just changed."""
+        value = self.top.settings[name]
+        box = self._boxes.get(name)
+        if box is not None:
+            # Changed in another tab
+            box.blockSignals(True)
+            box.setChecked(value)
+            box.blockSignals(False)
+        if name in MODEL_OPTIONS:
+            setattr(self.model, name, value)
+        if name == "labels":
+            for label in self._labels.values():
+                label.setVisible(value)
+            self.scene.update()
+        elif name == "show_repulsion":
+            if self._reach is not None:
+                self._reach.setVisible(value)
+                if value:
+                    self._reach.refresh()
+        elif name == "simulate":
+            if value:
+                self.timer.start()
+            else:
+                self.timer.stop()
+        elif name == "circle_repulsion":
+            self._forces_changed()
+        elif name in ("group_by_dungeon", "auto_join", "trim_rooms", "split_rooms"):
+            # These change which blocks there are, or their shapes
+            self.relayout()
+        elif name != "follow_player":
+            self.redraw_canvas()
 
     def _on_spacing(self, value):
         self.model.spacing = float(value)
-        self._forces_changed()
-
-    def _on_reach(self, checked):
-        if self._reach is not None:
-            self._reach.setVisible(checked)
-            if checked:
-                self._reach.refresh()
-
-    def _on_circle(self, checked):
-        self.model.circle_repulsion = checked
         self._forces_changed()
 
     def _on_pull(self, value):
@@ -853,12 +874,6 @@ class GraphPage(QWidget):
             self.model.settle(150)
             self.update_positions()
         self.top.map_changed()
-
-    def _on_simulate(self, checked):
-        if checked:
-            self.timer.start()
-        else:
-            self.timer.stop()
 
     def _tick(self):
         if not self.isVisible():
@@ -1338,14 +1353,6 @@ class GraphPage(QWidget):
     @property
     def tiles(self) -> dict[Tile, TileState]:
         return self.model.tiles
-
-    @property
-    def show_all_doors(self):
-        return self.model.show_all_doors
-
-    @show_all_doors.setter
-    def show_all_doors(self, value):
-        self.model.show_all_doors = value
 
     def init_page(self):
         self.model.reset()

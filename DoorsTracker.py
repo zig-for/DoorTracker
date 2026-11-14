@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 from PIL import Image
-from PySide6.QtCore import QSize, QStandardPaths, Qt, QTimer
+from PySide6.QtCore import QByteArray, QSize, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,6 +41,27 @@ SAVE_DELAY = 1000
 DRIFT_SAVE_DELAY = 10_000
 # Holds the name of the autosave written last
 LATEST = "latest.txt"
+# What is kept between launches, and its value on a first launch. A saved setting not listed here is ignored
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "autosave": True,
+    "tab": None,  # dungeon of the selected tab
+    "window": None,  # QWidget.saveGeometry(), as hex
+    # View and Experimental menus
+    "show_all_doors": False,
+    "hide_single_route_tiles": False,
+    "decoupled_doors": False,
+    "vanilla_drops": True,
+    "trim_rooms": True,
+    "split_rooms": True,
+    # Toolbar
+    "group_by_dungeon": False,
+    "auto_join": True,
+    "circle_repulsion": False,
+    "show_repulsion": False,
+    "simulate": False,
+    "follow_player": False,
+    "labels": True,
+}
 
 
 def autosave_name(seed_hash: str | None) -> str:
@@ -131,12 +152,19 @@ class EgPicker(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self, args: argparse.Namespace, settings_file: Path | None = None):
+        """settings_file: where the options are kept between launches. None to not keep them."""
         super().__init__()
         self.args = args
+        self.settings_file = settings_file
+        # Shared with every page's model
+        self.settings: dict[str, Any] = dict(DEFAULT_SETTINGS)
+        if settings_file is not None and settings_file.exists():
+            saved = yaml.safe_load(settings_file.read_text())
+            self.settings.update({name: value for name, value in saved.items() if name in DEFAULT_SETTINGS})
         self.autosave: Path | None = None  # folder; see start_autosave
         self._latest: str | None = None  # autosave file the next launch loads, as LATEST says
-        self.autosave_on = True  # File -> Autosave
+        self.autosave_on: bool = self.settings["autosave"]  # File -> Autosave, for this run
         self.seed_hash: str | None = None  # of the game the map was made on, once known; kept in the tracker file
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -145,15 +173,10 @@ class MainWindow(QMainWindow):
         self._drift_timer.setSingleShot(True)
         self._drift_timer.timeout.connect(self._write_autosave)
         self.setWindowTitle(TITLE)
-        self.resize(*WINDOW_SIZES[args.size])
-        self.experimental_flags = {
-            "hide_single_route_tiles": False,
-            "prefer_fill_map": False,
-            "decoupled_doors": False,
-            "vanilla_drops": True,
-            "trim_rooms": True,
-            "split_rooms": True,
-        }
+        if args.size is None and self.settings["window"]:
+            self.restoreGeometry(QByteArray.fromHex(self.settings["window"].encode()))
+        else:
+            self.resize(*WINDOW_SIZES[args.size or "medium"])
         self.device: str | None = None
         self.sni_task: asyncio.Task | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -170,6 +193,9 @@ class MainWindow(QMainWindow):
             page = GraphPage(self, world, self.assets, use_gl=not args.no_gl)
             self.pages[dungeon] = page
             self.tabs.addTab(page, dungeon.replace("_", " "))
+        if self.settings["tab"] in self.pages:
+            self.select_dungeon(self.settings["tab"])
+        self.tabs.currentChanged.connect(lambda: self.set_setting("tab", self.current_dungeon()))
         self._build_menus()
 
     # -------------------------------------------------------------------- menus
@@ -196,36 +222,31 @@ class MainWindow(QMainWindow):
         view_menu = bar.addMenu("View")
         view_menu.addAction("Fit to window", lambda: self.current_page().fit_view())
         view_menu.addAction("Re-layout", lambda: self.current_page().relayout())
-        show_all = QAction("Show All Doors", self, checkable=True)
-        show_all.toggled.connect(self._show_all_doors)
-        view_menu.addAction(show_all)
-
         experimental = bar.addMenu("Experimental")
-        for label, flag in (
-            ("Hide Single Route Tiles", "hide_single_route_tiles"),
-            ("Enable Decoupled Support", "decoupled_doors"),
-            ("Drops Are Not Shuffled", "vanilla_drops"),
-            ("Trim Rooms", "trim_rooms"),
-            ("Split Partitioned Rooms", "split_rooms"),
+        for menu, label, name in (
+            (view_menu, "Show All Doors", "show_all_doors"),
+            (experimental, "Hide Single Route Tiles", "hide_single_route_tiles"),
+            (experimental, "Enable Decoupled Support", "decoupled_doors"),
+            (experimental, "Drops Are Not Shuffled", "vanilla_drops"),
+            (experimental, "Trim Rooms", "trim_rooms"),
+            (experimental, "Split Partitioned Rooms", "split_rooms"),
         ):
             action = QAction(label, self, checkable=True)
-            action.setChecked(self.experimental_flags[flag])
-            action.toggled.connect(lambda checked, flag=flag: self._set_flag(flag, checked))
-            experimental.addAction(action)
+            action.setChecked(self.settings[name])
+            action.toggled.connect(lambda checked, name=name: self.set_option(name, checked))
+            menu.addAction(action)
 
-    def _show_all_doors(self, checked: bool) -> None:
-        for page in self.pages.values():
-            page.show_all_doors = checked
-            page.redraw_canvas()
+    def set_setting(self, name: str, value: Any) -> None:
+        """Change a setting and keep it for the next launch."""
+        self.settings[name] = value
+        if self.settings_file is not None:
+            files.write_text(self.settings_file, yaml.dump(self.settings))
 
-    def _set_flag(self, flag: str, checked: bool) -> None:
-        self.experimental_flags[flag] = checked
+    def set_option(self, name: str, value: bool) -> None:
+        """Change a setting the pages act on, in every tab."""
+        self.set_setting(name, value)
         for page in self.pages.values():
-            if flag in ("trim_rooms", "split_rooms"):
-                # These change block shapes or count
-                page.relayout()
-            else:
-                page.redraw_canvas()
+            page.option_changed(name)
 
     def current_page(self) -> GraphPage:
         return list(self.pages.values())[self.tabs.currentIndex()]
@@ -289,15 +310,18 @@ class MainWindow(QMainWindow):
         Nothing is saved before this is called, so a new window cannot save its empty map over a file.
         """
         latest = folder / LATEST
-        if restore and latest.exists():
+        if restore and self.autosave_on and latest.exists():
             self._latest = latest.read_text()
             file = folder / self._latest
             try:
                 self.load_file(str(file))
             except Exception as error:
                 traceback.print_exc()
-                # Saving now would overwrite the file that failed to load
+                # Saving now would overwrite the file that failed to load. Off for this run only
+                self.autosave_on = False
+                self.autosave_action.blockSignals(True)
                 self.autosave_action.setChecked(False)
+                self.autosave_action.blockSignals(False)
                 QMessageBox.warning(
                     self,
                     "Autosave not loaded",
@@ -310,6 +334,7 @@ class MainWindow(QMainWindow):
 
     def _set_autosave(self, checked: bool) -> None:
         self.autosave_on = checked
+        self.set_setting("autosave", checked)
         if checked:
             self.map_changed()
         else:
@@ -323,7 +348,7 @@ class MainWindow(QMainWindow):
 
     def _save_after_change(self) -> None:
         self._write_autosave()
-        if any(page.simulate_box.isChecked() for page in self.pages.values()):
+        if self.settings["simulate"]:
             self._drift_timer.start(DRIFT_SAVE_DELAY)
 
     def _write_autosave(self) -> None:
@@ -457,6 +482,7 @@ class MainWindow(QMainWindow):
         self._save_timer.stop()
         self._drift_timer.stop()
         self._write_autosave()
+        self.set_setting("window", bytes(self.saveGeometry().toHex().data()).decode())
         super().closeEvent(event)
 
 
@@ -476,7 +502,7 @@ def install_interrupt_handler(app, window):
 def main():
     parser = argparse.ArgumentParser(description="Auto-tracker for dungeon layouts in the ALttP door randomizer")
     parser.add_argument("tracker_file", nargs="?", default=None, help="Tracker data (yaml) or spoiler to load on startup")
-    parser.add_argument("--size", choices=list(WINDOW_SIZES), default="medium", help="Set the window size")
+    parser.add_argument("--size", choices=list(WINDOW_SIZES), default=None, help="Set the window size, instead of the size it last had")
     parser.add_argument("--port", type=int, default=8191, help="SNI connection port")
     parser.add_argument("--debug", action="store_true", default=False, help="Enable debug logging")
     parser.add_argument(
@@ -493,7 +519,7 @@ def main():
     app.setApplicationName("JankerDoorTracker")
     folder = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation))
     folder.mkdir(parents=True, exist_ok=True)
-    window = MainWindow(args)
+    window = MainWindow(args, settings_file=folder / "settings.yaml")
     window.show()
     install_interrupt_handler(app, window)
     if args.tracker_file:

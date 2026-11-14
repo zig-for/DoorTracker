@@ -16,14 +16,14 @@ def app():
 
 @pytest.fixture
 def open_window(app):
-    """Opens the tracker's main window, not connected to SNI and keeping no files."""
+    """Opens the tracker's main window, not connected to SNI. It keeps no files unless given a settings file."""
     import DoorsTracker
 
     opened = []
 
-    def open_window():
-        args = argparse.Namespace(tracker_file=None, size="medium", port=8191, debug=False, no_autotrack=True, no_gl=True)
-        window = DoorsTracker.MainWindow(args)
+    def open_window(settings_file=None, size="medium"):
+        args = argparse.Namespace(tracker_file=None, size=size, port=8191, debug=False, no_autotrack=True, no_gl=True)
+        window = DoorsTracker.MainWindow(args, settings_file)
         window.show()
         app.processEvents()
         opened.append(window)
