@@ -210,6 +210,7 @@ async def _sni_session(
     tab_changed = False
     is_dark = False
     boss_just_killed = False
+    seed_hash: str | None = None  # of the game last read in this session
     old_data = {k: None for k in mem_request_names}
     eg_tile = (0, 0)
 
@@ -242,6 +243,18 @@ async def _sni_session(
                 continue
 
             # Only in game: with no game running the bytes read are not a seed's.
+            if data["seed_hash"] != seed_hash:
+                if seed_hash is not None:
+                    # Another game was loaded and the connection stayed up. What is remembered is the old game's:
+                    # acting on it would link its last door to this game's first room
+                    current_tile = previous_tile = None
+                    current_x = current_y = previous_x = previous_y = previous_layer = None
+                    was_transitioning = was_falling = was_dead = was_mirroring = False
+                    cycle_skipped = boss_just_killed = tab_changed = False
+                    previous_dungeon = None
+                    # The first room seen was not walked into
+                    resumed = True
+                seed_hash = data["seed_hash"]
             # Before the race check, so a race seed gets its own map even though it is not tracked
             if not ui.seed_seen(data["seed_hash"]):
                 ui.set_title("Janker Door Tracker -Auto-tracking stopped: disconnected to leave the map as it is")
