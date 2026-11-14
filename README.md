@@ -24,7 +24,9 @@ Auto-tracking will track supertiles, links between doors and lobbies. Dark rooms
 
 Green doors are still unexplored, grey doors are linked. Hover anything to see its name in the toolbar. Hovering a room also fades every link that does not touch it. Lobbies hang off the door they lead to as a small entrance node.
 
-You can save the current state of the tracker with File -> Save Tracker Data, including where you dragged the cards and where the view was. Files saved by older versions load fine and are laid out automatically.
+The map is kept between launches: it is saved a second after each change and when the tracker closes, and loaded again the next time it starts. Starting the tracker with a file on the command line loads that file instead. Use File -> Reset Tracker to start an empty map, and untick File -> Autosave to stop the saving. The file is `autosave.yaml`, in `%LOCALAPPDATA%\JankerDoorTracker` on Windows and `~/.config/JankerDoorTracker` on Linux, and is an ordinary tracker file.
+
+You can also save the current state of the tracker with File -> Save Tracker Data, including where you dragged the cards and where the view was. Files saved by older versions load fine and are laid out automatically.
 
 ## Installation
 

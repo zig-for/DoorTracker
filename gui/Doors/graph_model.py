@@ -531,6 +531,11 @@ class GraphModel:
             node = Node(*(int(x) for x in str(key).split("__")))
             if node.tile in self.tiles and node.part < self.real_rooms.part_count(node.tile):
                 self.visited.add(node)
+        self.kept_expanded = set()
+        for key in data.get("expanded") or []:
+            node = Node(*(int(x) for x in str(key).split("__")))
+            if node.tile in self.tiles:
+                self.kept_expanded.add(node)
         for key, value in (data.get("graph_layout") or {}).items():
             # Keys: "x__y" for part 0, "x__y__part" otherwise
             node = Node(*(int(x) for x in str(key).split("__")))
@@ -595,6 +600,7 @@ class GraphModel:
                 if n.tile in self.tiles and self.real_rooms.part_count(n.tile) > 1
             ),
             "special_doors": dict(self.special_doors),
+            "expanded": sorted(f"{n.x}__{n.y}__{n.part}" for n in self.kept_expanded),
             "graph_layout": {
                 (f"{n.x}__{n.y}" if n.part == 0 else f"{n.x}__{n.y}__{n.part}"): [
                     round(p[0], 1),

@@ -4,12 +4,13 @@ import argparse
 import asyncio
 import signal
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
 import yaml
 from PIL import Image
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -28,11 +29,16 @@ import data.doors_sprite_data as sprites
 from data.doors_data import dungeon_lobbies, eg_tile_multiuse
 from data.vanilla_data import vanilla_layout_optimized
 from data.worlds_data import World, dungeon_worlds
+from gui import files
 from gui.Doors import rooms
 from gui.qt.graph_page import Assets, GraphPage
 
 WINDOW_SIZES = {"small": (1064, 632), "medium": (1588, 888), "large": (2088, 1144)}
 TITLE = "Janker Door Tracker"
+# The map is autosaved this long after its last change, in ms
+SAVE_DELAY = 1000
+# and once more this long after that if Simulate is on, as the cards keep moving
+DRIFT_SAVE_DELAY = 10_000
 
 
 class IconPicker(QDialog):
@@ -121,6 +127,14 @@ class MainWindow(QMainWindow):
     def __init__(self, args: argparse.Namespace):
         super().__init__()
         self.args = args
+        self.autosave: Path | None = None  # see start_autosave
+        self.autosave_on = True  # File -> Autosave
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._save_after_change)
+        self._drift_timer = QTimer(self)
+        self._drift_timer.setSingleShot(True)
+        self._drift_timer.timeout.connect(self._write_autosave)
         self.setWindowTitle(TITLE)
         self.resize(*WINDOW_SIZES[args.size])
         self.experimental_flags = {
@@ -156,6 +170,10 @@ class MainWindow(QMainWindow):
         file_menu = bar.addMenu("File")
         file_menu.addAction("Load Tracker Data", lambda: self.load_file())
         file_menu.addAction("Save Tracker Data", self.save_file)
+        self.autosave_action = QAction("Autosave", self, checkable=True)
+        self.autosave_action.setChecked(self.autosave_on)
+        self.autosave_action.toggled.connect(self._set_autosave)
+        file_menu.addAction(self.autosave_action)
         file_menu.addSeparator()
         file_menu.addAction("Stop Auto-tracking", self.stop_tracking)
         file_menu.addAction("Reconnect to SNI", lambda: self.start_tracking())
@@ -244,8 +262,57 @@ class MainWindow(QMainWindow):
             return
         if not file.endswith((".yaml", ".yml")):
             file += ".yaml"
-        with open(file, mode="w") as fh:
-            yaml.dump({dungeon: page.return_connections() for dungeon, page in self.pages.items()}, fh)
+        files.write_text(Path(file), yaml.dump(self.tracker_data()))
+
+    def tracker_data(self) -> dict[str, Any]:
+        """Everything a tracker file holds."""
+        return {dungeon: page.return_connections() for dungeon, page in self.pages.items()}
+
+    # ----------------------------------------------------------------- autosave
+
+    def start_autosave(self, file: Path, restore: bool) -> None:
+        """Keep the map in this file from here on. restore: first load the map the last run left in it.
+
+        Nothing is saved before this is called, so a new window cannot save its empty map over the file.
+        """
+        if restore and file.exists():
+            try:
+                self.load_file(str(file))
+            except Exception as error:
+                traceback.print_exc()
+                # Saving now would overwrite the file that failed to load
+                self.autosave_action.setChecked(False)
+                QMessageBox.warning(
+                    self,
+                    "Autosave not loaded",
+                    f"{file}\n\n{error!r}\n\nThe file has been left as it is, and File -> Autosave has been "
+                    "turned off. Turning it on again will save over the file.",
+                )
+        self.autosave = file
+        if not restore:
+            self.map_changed()
+
+    def _set_autosave(self, checked: bool) -> None:
+        self.autosave_on = checked
+        if checked:
+            self.map_changed()
+        else:
+            self._save_timer.stop()
+            self._drift_timer.stop()
+
+    def map_changed(self) -> None:
+        """A page's saved state changed. The map is saved once the changes stop."""
+        if self.autosave is not None and self.autosave_on:
+            self._save_timer.start(SAVE_DELAY)
+
+    def _save_after_change(self) -> None:
+        self._write_autosave()
+        if any(page.simulate_box.isChecked() for page in self.pages.values()):
+            self._drift_timer.start(DRIFT_SAVE_DELAY)
+
+    def _write_autosave(self) -> None:
+        if self.autosave is not None and self.autosave_on:
+            files.write_text(self.autosave, yaml.dump(self.tracker_data()))
 
     def reset_tracker(self):
         answer = QMessageBox.question(
@@ -350,6 +417,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.sni_task is not None:
             self.sni_task.cancel()
+        self._save_timer.stop()
+        self._drift_timer.stop()
+        self._write_autosave()
         super().closeEvent(event)
 
 
@@ -382,11 +452,16 @@ def main():
     args, qt_args = parser.parse_known_args()
 
     app = QApplication([sys.argv[0]] + qt_args)
+    # Names the per-user folder
+    app.setApplicationName("JankerDoorTracker")
+    folder = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation))
+    folder.mkdir(parents=True, exist_ok=True)
     window = MainWindow(args)
     window.show()
     install_interrupt_handler(app, window)
     if args.tracker_file:
         window.load_file(args.tracker_file)
+    window.start_autosave(folder / "autosave.yaml", restore=not args.tracker_file)
     if not args.no_autotrack:
         window.start_tracking()
     sys.exit(app.exec())

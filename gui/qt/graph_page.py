@@ -663,6 +663,7 @@ class GraphView(QGraphicsView):
         # centerOn rounds to whole pixels; correct the remainder
         centre = self.mapToScene(self.viewport().rect().center())
         self.translate(centre.x() - x, centre.y() - y)
+        self.page.top.map_changed()
 
     def zoom_at(self, view_pos, factor):
         """Zoom about a viewport point."""
@@ -671,9 +672,11 @@ class GraphView(QGraphicsView):
         self.scale(factor, factor)
         after = self.mapToScene(view_pos)
         self.translate(after.x() - before.x(), after.y() - before.y())
+        self.page.top.map_changed()
 
     def pan(self, dx, dy):
         self.translate(dx / self.zoom(), dy / self.zoom())
+        self.page.top.map_changed()
 
     def fit(self, bounds):
         x0, y0, x1, y1 = bounds
@@ -849,6 +852,7 @@ class GraphPage(QWidget):
         if not self.simulate_box.isChecked():
             self.model.settle(150)
             self.update_positions()
+        self.top.map_changed()
 
     def _on_simulate(self, checked):
         if checked:
@@ -949,6 +953,7 @@ class GraphPage(QWidget):
         self.update_positions(links=False)
         if self._needs_fit and model.pos and self.view.viewport().width() > 50 and self.isVisible():
             self.fit_view()
+        self.top.map_changed()
 
     def update_positions(self, links: bool = True) -> None:
         """Move existing items to the model's positions. The per-frame path."""
@@ -1113,6 +1118,7 @@ class GraphPage(QWidget):
         zoom = self.view.zoom()
         self.model.drag(press.node, delta.x() / zoom, delta.y() / zoom)
         self.update_positions()
+        self.top.map_changed()
 
     def on_release(self, event):
         press, self._press = self._press, None
@@ -1295,12 +1301,14 @@ class GraphPage(QWidget):
             if member in self._rooms:
                 self._rooms[member].pinned = pinned
                 self._rooms[member].update()
+        self.top.map_changed()
 
     def unpin_all(self):
         self.model.unpin_all()
         for room in self._rooms.values():
             room.pinned = False
             room.update()
+        self.top.map_changed()
 
     def remove_tile(self, tile: Tile) -> None:
         # Also removes its links, lobbies and icons: confirm first
