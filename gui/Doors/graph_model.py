@@ -29,7 +29,6 @@ from gui.Doors.layout import CONTACT_RANGE, LINK_GAP, REPEL_RANGE, enclosing_cir
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
-    ENTRANCE_ONLY_DOORS,
     Box,
     EdgeKind,
     Node,
@@ -44,6 +43,7 @@ from gui.Doors.rooms import (
     door_direction,
     door_fraction,
     door_vector,
+    entrance_only,
     supertile,
 )
 
@@ -1287,7 +1287,7 @@ class GraphModel:
         lobby_doors = set(self.lobby_door_names())
         dots = []
         for door in self.rooms.doors(node):
-            if door in ENTRANCE_ONLY_DOORS or door.startswith("Skull Drop Entrance"):
+            if entrance_only(door):
                 continue
             if door in self._seam_doors or not self._door_visible(door):
                 continue

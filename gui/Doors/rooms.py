@@ -100,6 +100,11 @@ for _pair in interior_doors:
 # Doors that only exist as a way into the dungeon, drawn as entrances rather than ports
 ENTRANCE_ONLY_DOORS = ("Sanctuary Mirror Route", "Sewer Drop")
 
+
+def entrance_only(door: str) -> bool:
+    """Whether a door is only a way into the dungeon. It gets an entrance marker and no dot."""
+    return door in ENTRANCE_ONLY_DOORS or door.startswith("Skull Drop Entrance")
+
 MANUAL_REGIONS_ADDED = {
     "Eastern Hint Tile WN": "Eastern Hint Tile Blocked Path",
     "Ice Dead End WS": "Ice Big Key",

@@ -57,6 +57,7 @@ from gui.Doors.rooms import (
     Tile,
     door_direction,
     door_vector,
+    entrance_only,
     supertile,
 )
 from gui.qt.style import (
@@ -466,7 +467,7 @@ class IconItem(QGraphicsItem):
         return path
 
     def paint(self, painter, option, widget=None):
-        if self.lobby:
+        if self.lobby and self.spot != self.origin:
             painter.setPen(QPen(QColor("#111"), 2.5, Qt.PenStyle.DashLine))
             painter.drawLine(self.origin, self.spot)
         box = QRectF(self.spot.x() - 9, self.spot.y() - 9, 18, 18)
@@ -908,8 +909,11 @@ class GraphPage(QWidget):
             x, y = model.port_offset(door)
             if door in lobbies:
                 direction = door_vector(door) or (0, 1)
-                if door in ("Sanctuary Mirror Route", "Sewer Drop") or "Drop" in door:
+                if "Drop" in door:
                     direction = (0, -1)
+                if entrance_only(door):
+                    # No dot to point at: the marker goes on the spot itself
+                    direction = (0, 0)
                 if model.is_hidden_dark(node.tile):
                     direction = (0, 1)
                 lobby = lobbies[door]
