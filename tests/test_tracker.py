@@ -161,6 +161,22 @@ def test_the_tracker_stops_when_the_window_says_to_disconnect(window, app, monke
     assert "disconnected" in window.windowTitle()
 
 
+def test_leaving_a_dungeon_before_a_position_is_read_adds_no_entrance(window, app, monkeypatch):
+    tile, doors = supertile_with_doors_facing("So")
+    at_door = (tile, doors["So"]["x"], doors["So"]["y"])
+    inside, outside = reading(*at_door), reading(*at_door, indoors=False)
+    # Back in, and out again while still in the doorway: no position is read on this visit
+    in_the_doorway = reading(*at_door, transitioning=True)
+
+    seen = play(
+        window,
+        app,
+        monkeypatch,
+        [("in", inside), ("in still", inside), ("out", outside), ("back in", in_the_doorway), ("out again", outside), ("outside", outside)],
+    )
+    assert seen["end"]["entrances"] == seen["back in"]["entrances"] == [doors["So"]["name"]]
+
+
 def test_loading_another_seed_mid_dungeon_adds_nothing_from_the_old_game(window, app, monkeypatch):
     # The connection survives a change of ROM, so the tracker still remembers the old game's room
     monkeypatch.setattr(window, "_ask", lambda *args: DoorsTracker.NEW_MAP)

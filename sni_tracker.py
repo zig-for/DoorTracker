@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import math
 from collections.abc import Container, Mapping
+from dataclasses import dataclass
 from typing import Protocol
 
 import grpc.aio
@@ -131,6 +132,38 @@ class TrackerUI(Protocol):
     def select_dungeon(self, name: str) -> None: ...
 
 
+@dataclass
+class Stay:
+    """What the tracker remembers about the dungeon the player is in. Forgotten on leaving it."""
+
+    eg_tile: tuple[int, int] | None = None  # supertile of the last reading; None until one is read
+    current_tile: tuple[int, int] | None = None
+    previous_tile: tuple[int, int] | None = None
+    current_x: int | None = None  # position in the supertile
+    current_y: int | None = None
+    previous_x: int | None = None
+    previous_y: int | None = None
+    previous_layer: str | None = None
+    previous_dungeon: str | None = None  # the dungeon this is, once read
+    tab_changed: bool = False  # its tab has been brought to the front
+    cycle_skipped: bool = False
+    was_mirroring: bool = False
+    boss_just_killed: bool = False
+    resumed: bool = False  # the player did not walk in: the tracker reconnected, or another game was loaded
+
+
+@dataclass
+class Game:
+    """What the tracker remembers about the game being read. Forgotten when another seed is loaded."""
+
+    stay: Stay
+    seed_hash: str | None = None  # None until the game is first read
+    # These outlast leaving a dungeon
+    was_transitioning: bool = False
+    was_falling: bool = False
+    was_dead: bool = False
+
+
 async def sni_probe(ui: TrackerUI, args: argparse.Namespace, forced_autotrack: bool = False, device: str | None = None) -> None:
     """Run tracking, reconnecting on SNI/device errors."""
     last_error = None
@@ -192,31 +225,14 @@ async def _sni_session(
             f"Janker Door Tracker -Auto-tracking Forced (!! Race Rom Detected !!) (Connected to {dev_uri})"
         )
 
-    current_tile = None
-    previous_tile = None
-    current_x = None
-    current_y = None
-    previous_x = None
-    previous_y = None
-    previous_layer = None
-    was_transitioning = False
-    was_falling = False
-    was_dead = False
     # Reconnected mid-dungeon: the first room seen is not a dungeon entry
-    resumed = seen["in_dungeon"]
-    cycle_skipped = False
-    was_mirroring = False
-    previous_dungeon: str | None = None
-    tab_changed = False
-    is_dark = False
-    boss_just_killed = False
-    seed_hash: str | None = None  # of the game last read in this session
+    game = Game(Stay(resumed=seen["in_dungeon"]))
     old_data = {k: None for k in mem_request_names}
-    eg_tile = (0, 0)
 
     # Main loop for data collection
     while True:
         try:
+            stay = game.stay
             mem_req = sni_pb2.MultiReadMemoryRequest(uri=dev_uri, requests=list(mem_request.values()))
             mem_data = await mem_stub.MultiRead(mem_req)
             data = des_data(mem_request_names, mem_data)
@@ -225,7 +241,7 @@ async def _sni_session(
             if len(data_diff) != 0 and args.debug:
                 print(data_diff)
 
-            if boss_just_killed:
+            if stay.boss_just_killed:
                 if data["gamemode"] != "09":
                     await asyncio.sleep(0.1)
                     continue
@@ -233,28 +249,23 @@ async def _sni_session(
             # Are we even in game?
             if int(data["gamemode"], 16) <= 0x5 or int(data["gamemode"], 16) >= 0x0B:
                 if data["gamemode"] == "16":
-                    boss_just_killed = True
+                    stay.boss_just_killed = True
                     await asyncio.sleep(0.1)
                     continue
                 if data["mirror"] == "f7":
-                    was_mirroring = True
+                    stay.was_mirroring = True
 
                 await asyncio.sleep(0.1)
                 continue
 
             # Only in game: with no game running the bytes read are not a seed's.
-            if data["seed_hash"] != seed_hash:
-                if seed_hash is not None:
+            if data["seed_hash"] != game.seed_hash:
+                if game.seed_hash is not None:
                     # Another game was loaded and the connection stayed up. What is remembered is the old game's:
                     # acting on it would link its last door to this game's first room
-                    current_tile = previous_tile = None
-                    current_x = current_y = previous_x = previous_y = previous_layer = None
-                    was_transitioning = was_falling = was_dead = was_mirroring = False
-                    cycle_skipped = boss_just_killed = tab_changed = False
-                    previous_dungeon = None
-                    # The first room seen was not walked into
-                    resumed = True
-                seed_hash = data["seed_hash"]
+                    game = Game(Stay(resumed=True))
+                    stay = game.stay
+                game.seed_hash = data["seed_hash"]
             # Before the race check, so a race seed gets its own map even though it is not tracked
             if not ui.seed_seen(data["seed_hash"]):
                 ui.set_title("Janker Door Tracker -Auto-tracking stopped: disconnected to leave the map as it is")
@@ -272,65 +283,55 @@ async def _sni_session(
 
             if data["dungeon"] not in dungeon_ids.keys() or data["indoors"] != "01":
                 if (
-                    previous_dungeon in dungeon_ids
+                    stay.previous_dungeon in dungeon_ids
                     and data["indoors"] == "00"
                     and data["mirror"] != "0f"
-                    and not boss_just_killed
+                    and not stay.boss_just_killed
                 ):
                     ui.highlight_dungeon(None)
-                    # Just left a dungeon, add the last door as a lobby
-                    new_door = find_closest_door(current_x, current_y, eg_tile, previous_layer)
-                    ui.pages[dungeon_ids[previous_dungeon]].auto_add_lobby(new_door)
-                current_tile = None
-                previous_tile = None
-                current_x = None
-                current_y = None
-                previous_x = None
-                previous_y = None
-                previous_layer = None
-                cycle_skipped = False
-                was_mirroring = False
-                previous_dungeon = None
-                tab_changed = False
-                is_dark = False
-                boss_just_killed = False
-                seen["in_dungeon"] = resumed = False
+                    # Just left a dungeon, add the last door as a lobby. Not if the player left before a
+                    # position was read, as in a doorway: there is then no door to find
+                    if stay.eg_tile is not None and stay.current_x is not None:
+                        new_door = find_closest_door(stay.current_x, stay.current_y, stay.eg_tile, stay.previous_layer)
+                        ui.pages[dungeon_ids[stay.previous_dungeon]].auto_add_lobby(new_door)
+                game.stay = Stay()
+                seen["in_dungeon"] = False
                 await asyncio.sleep(0.1)
                 continue
 
             seen["in_dungeon"] = True
-            previous_dungeon = data["dungeon"]
+            stay.previous_dungeon = data["dungeon"]
             ui.highlight_dungeon(dungeon_ids[data["dungeon"]])
 
-            if not tab_changed:
-                tab_changed = True
+            if not stay.tab_changed:
+                stay.tab_changed = True
                 ui.select_dungeon(dungeon_ids[data["dungeon"]])
 
             if data["transitioning"] != "00":
-                was_transitioning = True
+                game.was_transitioning = True
                 await asyncio.sleep(0.1)
                 continue
 
             # Both dying and falling can change supertile with no real doors
             if data["dead"] == "01":
-                previous_tile = current_tile = None
-                was_dead = True
+                stay.previous_tile = stay.current_tile = None
+                game.was_dead = True
                 continue
 
             if data["falling"] != "00" and data["falling"] != "01":
-                previous_tile = current_tile = None
-                was_falling = True
+                stay.previous_tile = stay.current_tile = None
+                game.was_falling = True
                 continue
 
-            if not cycle_skipped and (was_transitioning or was_falling or was_dead):
-                cycle_skipped = True
+            if not stay.cycle_skipped and (game.was_transitioning or game.was_falling or game.was_dead):
+                stay.cycle_skipped = True
                 continue
 
-            cycle_skipped = False
+            stay.cycle_skipped = False
 
             # TODO: Check doors to see if they're entrances and add lobbies?
 
-            eg_tile = (
+            eg_tile = stay.eg_tile = (
                 int(data["dungeon_room"], 16) % 16,
                 int(data["dungeon_room"], 16) // 16,
             )
@@ -345,8 +346,8 @@ async def _sni_session(
 
             current_x_subtile = int(data["link_x"][2:], 16) % 2
             current_y_subtile = int(data["link_y"][2:], 16) % 2
-            current_x = (current_x_subtile * 255) + int(data["link_x"][:2], 16)
-            current_y = (current_y_subtile * 255) + int(data["link_y"][:2], 16)
+            current_x = stay.current_x = (current_x_subtile * 255) + int(data["link_x"][:2], 16)
+            current_y = stay.current_y = (current_y_subtile * 255) + int(data["link_y"][:2], 16)
 
             if eg_tile not in dp_content.tiles:
                 dp_content.auto_add_tile(eg_tile, was_lit=not is_dark, player=(current_x, current_y))
@@ -358,13 +359,15 @@ async def _sni_session(
             else:
                 dp_content.clear_player()
 
-            if (previous_tile != eg_tile and previous_tile == None) or (was_mirroring and data["mirror"] != "0f"):
-                previous_tile = eg_tile
-                current_tile = eg_tile
-                if was_falling or was_dead or resumed:
-                    was_falling = False
-                    was_dead = False
-                    resumed = False
+            if (stay.previous_tile != eg_tile and stay.previous_tile == None) or (
+                stay.was_mirroring and data["mirror"] != "0f"
+            ):
+                stay.previous_tile = eg_tile
+                stay.current_tile = eg_tile
+                if game.was_falling or game.was_dead or stay.resumed:
+                    game.was_falling = False
+                    game.was_dead = False
+                    stay.resumed = False
                     continue
                 # We just entered a new dungeon, add an entrance
                 if eg_tile == (2, 1):
@@ -374,19 +377,19 @@ async def _sni_session(
                     current_y,
                     eg_tile,
                     data["layer"],
-                    closest_distance=32 if was_mirroring else 128,
+                    closest_distance=32 if stay.was_mirroring else 128,
                 )
                 dp_content.auto_add_lobby(new_door)
-                was_mirroring = False
+                stay.was_mirroring = False
 
-            elif (previous_tile != eg_tile and previous_tile != None) or was_transitioning:
-                was_transitioning = False
-                previous_tile = current_tile
-                current_tile = eg_tile
+            elif (stay.previous_tile != eg_tile and stay.previous_tile != None) or game.was_transitioning:
+                game.was_transitioning = False
+                stay.previous_tile = stay.current_tile
+                stay.current_tile = eg_tile
 
                 new_door = find_closest_door(current_x, current_y, eg_tile, data["layer"])
                 try:
-                    old_door = find_closest_door(previous_x, previous_y, previous_tile, previous_layer)
+                    old_door = find_closest_door(stay.previous_x, stay.previous_y, stay.previous_tile, stay.previous_layer)
                 except TypeError:
                     # We likely fell in a hole to a dungeon, so we don't have a previous door
                     continue
@@ -394,9 +397,9 @@ async def _sni_session(
                     continue
                 dp_content.auto_add_door_link(old_door, new_door)
 
-            previous_x = current_x
-            previous_y = current_y
-            previous_layer = data["layer"]
+            stay.previous_x = current_x
+            stay.previous_y = current_y
+            stay.previous_layer = data["layer"]
 
             await asyncio.sleep(0.1)
         except grpc.aio.AioRpcError:
