@@ -36,7 +36,7 @@ from data.doors_data import dungeon_lobbies, eg_tile_multiuse
 from data.vanilla_data import vanilla_layout_optimized
 from data.worlds_data import World, dungeon_worlds
 from gui import files
-from gui.Doors import rooms
+from gui.Doors import rooms, seed_map
 from gui.Doors.checks import checks
 from gui.Doors.layout import REPEL_RANGE
 from gui.Doors.logic import items_held, small_keys
@@ -241,6 +241,7 @@ class MainWindow(QMainWindow):
             self.resize(*WINDOW_SIZES[args.size or "medium"])
         self.device: str | None = None
         self.connected = False  # the auto-tracker is reading from a device
+        self.seed_map_wanted = False  # the cheat was asked for: the auto-tracker reads the ROM and calls seed_map_read
         self._adopt_seed = False  # see new_map
         self.sni_task: asyncio.Task | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -308,6 +309,8 @@ class MainWindow(QMainWindow):
             action.setObjectName(name)
             action.toggled.connect(self._option_toggled)
             menu.addAction(action)
+        experimental.addSeparator()
+        experimental.addAction("Cheat: Reveal All Tiles", self._reveal_all)
 
     # What the menus and the toolbar call. Signals go to methods, never lambdas: Qt keeps a lambda that holds the
     # window alive, and the window with it after it has closed
@@ -326,6 +329,29 @@ class MainWindow(QMainWindow):
 
     def _relayout(self) -> None:
         self.current_page().relayout()
+
+    def _reveal_all(self) -> None:
+        """The cheat: ask the auto-tracker for the seed's own map; seed_map_read gets it."""
+        if not self.connected:
+            QMessageBox.information(self, "Reveal All Tiles", "This reads the seed's map from the game. Connect auto-tracking to a game first.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Reveal All Tiles",
+            "Replace the map on every tab with the seed's own, read from the game?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.seed_map_wanted = True
+
+    def seed_map_read(self, memory: Mapping[str, bytes]) -> None:
+        """The parts of the ROM that say what the seed did with the doors, as the auto-tracker just read them."""
+        seed = seed_map.decode(memory)
+        links = seed.links(self.settings["decoupled_doors"])
+        for page in self.pages.values():
+            mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[page.tab_world]}
+            page.show_seed(links, mine)
 
     def _option_toggled(self, checked: bool) -> None:
         """A menu option or a toolbar box, named after its setting, was toggled."""

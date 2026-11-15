@@ -7,9 +7,11 @@ import grpc
 
 import DoorsTracker
 import sni_tracker
-from data.doors_data import dark_tiles, door_coordinates, doors_data
+from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
+from gui.Doors import seed_map
 from gui.Doors.logic import ITEMS_AT
-from gui.Doors.rooms import INTERIOR_DOORS
+from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
+from support import VANILLA, a_rom
 
 DUNGEON, TAB = "0c", "Palace_of_Darkness"
 DARK_ROOM = (10, 11)
@@ -63,11 +65,12 @@ class PlaybackOver(grpc.aio.AioRpcError):
         pass
 
 
-def play(window, app, monkeypatch, steps, collected=(), equipment=None):
+def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None):
     """Feed the readings to the real loop. Returns the map's state as it was before each labelled reading, and at the end.
 
     collected: (table, room, mask) flags the game has set, for the tracker's reads of what has been collected.
     equipment: {address in save data: byte} for the items held.
+    rom: what the ROM holds of the seed's map, by name in seed_map.READS.
     """
     model = window.pages[TAB].model
     seen = {}
@@ -104,6 +107,10 @@ def play(window, app, monkeypatch, steps, collected=(), equipment=None):
         async def MultiRead(self, request):
             if request.requests[0].requestAddress == sni_tracker.check_addresses["room"][0]:
                 return Reply(responses=[Reply(data=bytes(tables[name])) for name in sni_tracker.check_addresses])
+            for name, (address, size) in seed_map.READS.items():
+                if rom is not None and address <= request.requests[0].requestAddress < address + size:
+                    pieces = [(piece.requestAddress - address, piece.size) for piece in request.requests]
+                    return Reply(responses=[Reply(data=rom[name][at : at + length]) for at, length in pieces])
             app.processEvents()
             if self.served == len(steps):
                 seen["end"] = state()
@@ -279,3 +286,16 @@ def test_leaving_a_dungeon_makes_the_door_left_by_an_entrance(window, app, monke
 
     assert doors["So"]["name"] not in seen["outside"]["entrances"]
     assert doors["So"]["name"] in seen["end"]["entrances"]
+
+
+def test_the_cheat_reads_the_seeds_map_out_of_the_rom(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    here = (tile, door["x"], door["y"])
+    # As the menu leaves it once the tracker is connected
+    window.seed_map_wanted = True
+    play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], rom=a_rom(VANILLA, default_one_way_connections))
+
+    assert not window.seed_map_wanted
+    # The ROM has the doors as in the original game: a tab the player has not been in has its dungeon's rooms
+    assert set(window.pages["Eastern_Palace"].model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == "Eastern_Palace"}
+    assert ("Eastern Cannonball S", "Eastern Lobby Bridge N") in [(link.door, link.linked_door) for link in window.pages["Eastern_Palace"].model.door_links]

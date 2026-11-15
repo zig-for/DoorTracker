@@ -1,11 +1,31 @@
 """Helpers for building maps in tests. Maps are built from the door tables, not from tracker files."""
 
-from data.doors_data import dark_tiles
+from data.doors_data import dark_tiles, default_door_connections, ladders, open_edges, spiral_staircases, straight_staircases
 from data.worlds_data import dungeon_worlds
+from gui.Doors import seed_map
 from gui.Doors.graph_model import GraphModel
+from gui.Doors.randomizer import doors_and_portals
 from gui.Doors.rooms import DOORS, INTERIOR_DOORS, SPLIT, SUPERTILES, supertile
 
 OPPOSITE = {"No": "So", "So": "No", "Ea": "We", "We": "Ea"}
+# The pairs of doors joined both ways in the original game
+VANILLA = [*default_door_connections, *spiral_staircases, *straight_staircases, *open_edges, *ladders]
+
+
+def a_rom(pairs, one_way=()):
+    """What the tracker reads of a ROM whose doors are joined in these pairs: written as the randomizer's Rom.py
+    writes it, with every dungeon entrance at its own door."""
+    doors, portals = doors_and_portals()
+    named = {door.name: door for door in doors}
+    image = bytearray(0x200000)
+    for a, b in [*pairs, *((b, a) for a, b in pairs), *one_way]:
+        data = named[b].getTarget(named[a])
+        image[named[a].getAddress() : named[a].getAddress() + len(data)] = bytes(data)
+    for portal in portals:
+        image[seed_map.ENTRANCE_ROOMS + portal.ent_offset * 2] = portal.current_room()
+        at = seed_map.ENTRANCE_SCROLLS + portal.ent_offset * 2
+        image[at : at + 2] = bytes(portal.scroll_x())
+    return {name: bytes(image[address : address + size]) for name, (address, size) in seed_map.READS.items()}
 
 
 def new_model(tab="Turtle_Rock", **flags):

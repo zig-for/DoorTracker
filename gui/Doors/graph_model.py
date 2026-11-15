@@ -492,6 +492,33 @@ class GraphModel:
         self.update()
         return True
 
+    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str]) -> None:
+        """A cheat: this tab's dungeon as the seed made it, in place of the map that was there.
+
+        links: the doors the seed joined, in every dungeon, as (door, the door it leads to).
+        entrances: this dungeon's own, by name -> the door each comes in by.
+        What can be walked to from the entrances is this dungeon: the links there are kept, and every room is lit.
+        """
+        used = self.used_entrances
+        notes = {door: icon for door, icon in self.special_doors.items() if door not in self.lobby_door_names()}
+        self.reset()
+        self.used_entrances = used
+        for name, door in entrances.items():
+            self.add_lobby_door(door, name)
+        self.door_links = [Link(door, leads_to) for door, leads_to in links]
+        reached, _ = self._walk(self.lobby_door_names(), None)
+        self.door_links = [link for link in self.door_links if any(region in reached for region in regions_at(link.door))]
+        self.special_doors.update(notes)
+        self._sync_model()
+        # A room with no doors is only fallen or warped into, so no link brings it onto the map
+        for region, room in rooms.DOORLESS_ROOMS.items():
+            if region in reached:
+                self._ensure_tile(room.tile)
+        for state in self.tiles.values():
+            state.has_been_lit = True
+        self.relayout()
+        self._find_reach()
+
     def add_tile(
         self,
         tile: Tile,

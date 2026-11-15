@@ -1520,6 +1520,13 @@ class GraphPage(QWidget):
         else:
             self.scene.update()
 
+    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str]) -> None:
+        """A cheat: this tab's dungeon as the seed made it; see GraphModel.show_seed."""
+        self.model.show_seed(links, entrances)
+        self._select(None)
+        self._needs_fit = True
+        self.rebuild()
+
     def auto_light_tile(self, tile: Tile) -> None:
         """A dark supertile on the map has been seen lit."""
         if self.model.light(tile):

@@ -2,9 +2,11 @@
 
 import copy
 
-from data.doors_data import dark_tiles
+from data.doors_data import dark_tiles, default_one_way_connections, dungeon_lobbies
+from gui.Doors import seed_map
+from gui.Doors.randomizer import doors_and_portals
 from gui.Doors.rooms import DOORS, INTERIOR_DOORS, SPLIT, SUPERTILES, supertile
-from support import grow, joined_doors, new_model, next_link, open_doors, positions
+from support import VANILLA, a_rom, grow, joined_doors, new_model, next_link, open_doors, positions
 
 
 def stairs_pair(model):
@@ -228,3 +230,27 @@ def test_adding_a_room_does_not_move_the_rooms_already_there():
     model.auto_add_door_link(door, other)
     moved = [node for node in before if positions(model)[node] != before[node]]
     assert moved == []
+
+
+def test_a_seeds_links_and_entrances_are_read_back_from_its_rom():
+    # Two of the original game's links, a west door to an east one and an east to a west, joined the other way
+    (a, b), (c, d) = VANILLA[0], VANILLA[1]
+    pairs = [(a, c), (b, d), *VANILLA[2:]]
+    seed = seed_map.decode(a_rom(pairs, default_one_way_connections))
+    assert seed.leads == {**dict(pairs), **{y: x for x, y in pairs}, **dict(default_one_way_connections)}
+    assert seed.entrances == {portal.name: portal.door.name for portal in doors_and_portals()[1]}
+    # Each pair once, and the ways into rooms with no way back
+    assert len(seed.links(decoupled=False)) == len(pairs) + len(default_one_way_connections)
+
+
+def test_the_cheat_gives_each_tab_its_own_dungeon_as_the_seed_made_it():
+    seed = seed_map.decode(a_rom(VANILLA, default_one_way_connections))
+    for tab in sorted({record.dungeon for record in SUPERTILES.values() if record.dungeon}):
+        model = new_model(tab)
+        model.add_tile(DOORS["Hera Lobby S"].tile, has_been_lit=True)  # what was on the map goes
+        mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]}
+        model.show_seed(seed.links(decoupled=False), mine)
+        # With the doors as in the original game, that is the dungeon's own rooms, all lit
+        assert set(model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == tab}, tab
+        assert not any(model.is_hidden_dark(tile) for tile in model.tiles)
+        assert set(mine.values()) <= {lobby.door for lobby in model.lobby_doors}
