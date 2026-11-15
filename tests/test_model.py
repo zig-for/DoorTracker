@@ -232,6 +232,21 @@ def test_adding_a_room_does_not_move_the_rooms_already_there():
     assert moved == []
 
 
+def test_no_room_is_laid_out_on_an_entrances_marker():
+    # Skull Woods as in the original game: the room south of the first lobby would join on under its entrance
+    seed = seed_map.decode(a_rom(VANILLA, default_one_way_connections))
+    model = new_model("Skull_Woods")
+    model.show_seed(seed.links(decoupled=False), {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]})
+    assert any(model.marker_boxes(node) for node in model.nodes())
+    for node in model.nodes():
+        x, y = model.pos[node]
+        for left, top, right, bottom in model.marker_boxes(node):
+            for other in model.nodes():
+                ox, oy = model.pos[other]
+                on_it = [p for p in model.pieces(other) if x + left < ox + p[2] and ox + p[0] < x + right and y + top < oy + p[3] and oy + p[1] < y + bottom]
+                assert other == node or not on_it, (node, other)
+
+
 def test_a_seeds_links_and_entrances_are_read_back_from_its_rom():
     # Two of the original game's links, a west door to an east one and an east to a west, joined the other way
     (a, b), (c, d) = VANILLA[0], VANILLA[1]

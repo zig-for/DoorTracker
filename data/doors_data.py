@@ -3160,8 +3160,8 @@ door_coordinates.update(
         ],
         (9, 2): [
             {
-                "x": 390,
-                "y": 384,
+                "x": 345,
+                "y": 400,
                 "loc_type": "door",
                 "button": 1001,
                 "name": "Skull Boss Drop Entrance",

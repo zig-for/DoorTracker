@@ -46,7 +46,7 @@ from data.doors_data import mandatory_tiles
 from data.doors_sprite_data import ITEM_SHEET_PATH
 from data.room_bounds import room_bounds
 from data.worlds_data import World
-from gui.Doors.graph_model import THUMB, Edge, GraphModel, TileState
+from gui.Doors.graph_model import LOBBY_REACH, THUMB, Edge, GraphModel, TileState
 from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
     DOORS,
@@ -504,7 +504,7 @@ class IconItem(QGraphicsItem):
         self.lobby = lobby
         self.origin = QPointF(x, y)
         self.direction = direction
-        self.spot = QPointF(x + direction[0] * 30, y + direction[1] * 30) if lobby else QPointF(x, y)
+        self.spot = QPointF(x + direction[0] * LOBBY_REACH, y + direction[1] * LOBBY_REACH) if lobby else QPointF(x, y)
 
     def boundingRect(self):
         rect = QRectF(self.spot.x() - 60, self.spot.y() - 30, 120, 60)
@@ -975,14 +975,7 @@ class GraphPage(QWidget):
                 continue
             x, y = model.port_offset(door)
             if door in lobbies:
-                direction = door_vector(door) or (0, 1)
-                if "Drop" in door:
-                    direction = (0, -1)
-                if entrance_only(door):
-                    # No dot to point at: the marker goes on the spot itself
-                    direction = (0, 0)
-                if model.is_hidden_dark(node.tile):
-                    direction = (0, 1)
+                direction = model.lobby_direction(door)
                 lobby = lobbies[door]
                 picture = "Drop" if "Drop" in lobby or "Drop" in door else lobby
                 IconItem(self._doors[node], self, door, x, y, picture, lobby=lobby, direction=direction)

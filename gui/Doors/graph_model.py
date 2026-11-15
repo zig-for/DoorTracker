@@ -63,6 +63,9 @@ THUMB = 128  # supertile thumbnail edge
 COMPACT_W = 104  # pass-through tiles collapse to a pill
 COMPACT_H = 26
 JOIN_GAP = 4  # gap between joined rooms
+LOBBY_REACH = 30  # how far from its door an entrance's marker is drawn
+MARKER_HALF = 10  # half the side of a marker
+MARKER_NAME = (30, 12, 26)  # an entrance's name by its marker: half its width, and how far from the marker's centre
 SNAP = THUMB / 8  # grid for joined rooms along the shared wall
 
 
@@ -1015,6 +1018,35 @@ class GraphModel:
             )
         return pieces
 
+    def lobby_direction(self, door: str) -> tuple[int, int]:
+        """The way an entrance's marker hangs off its door. (0, 0) for one drawn on the spot, having no dot to
+        point at."""
+        if self.is_hidden_dark(self.rooms.node(door).tile):
+            return (0, 1)
+        if entrance_only(door):
+            return (0, 0)
+        if "Drop" in door:
+            return (0, -1)
+        return door_vector(door) or (0, 1)
+
+    def marker_boxes(self, node: Node) -> list[Box]:
+        """Where the entrances on a node have their markers, stems and names, relative to the supertile centre.
+        The layout keeps other rooms off them."""
+        boxes = []
+        for lobby in self.lobby_doors:
+            if lobby.door not in DOORS or self.rooms.node(lobby.door) != node:
+                continue
+            dx, dy = self.lobby_direction(lobby.door)
+            if (dx, dy) == (0, 0):
+                continue
+            x, y = self.port_offset(lobby.door)
+            mx, my = x + dx * LOBBY_REACH, y + dy * LOBBY_REACH
+            boxes.append((min(x, mx) - MARKER_HALF, min(y, my) - MARKER_HALF, max(x, mx) + MARKER_HALF, max(y, my) + MARKER_HALF))
+            # The name is under the marker, or over one that points up
+            half, near, far = MARKER_NAME
+            boxes.append((mx - half, my + near, mx + half, my + far) if dy >= 0 else (mx - half, my - far, mx + half, my - near))
+        return boxes
+
     def box(self, node: Node) -> Box:
         """Bounding box of a node's pieces."""
         pieces = self.pieces(node)
@@ -1097,7 +1129,8 @@ class GraphModel:
         root = {n: n for n in nodes}
         off = {n: (0.0, 0.0) for n in nodes}
         members = {n: [n] for n in nodes}
-        boxes = {n: self.pieces(n) for n in nodes}
+        # A room is not joined on where it would sit on another's entrance marker
+        boxes = {n: self.pieces(n) + self.marker_boxes(n) for n in nodes}
         # Parts of a supertile shown whole stay in one block at zero offset
         for tile in self._whole:
             parts = [n for n in nodes if n.tile == tile]
@@ -1413,7 +1446,7 @@ class GraphModel:
                 rects = self._body_rects[root] = []
                 for m in members:
                     ox, oy = self.blocks.offset[m]
-                    for left, top, right, bottom in self.pieces(m):
+                    for left, top, right, bottom in self.pieces(m) + self.marker_boxes(m):
                         rects.append((ox + (left + right) / 2, oy + (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2))
             if any(m in self.fixed or m in self.held for m in members):
                 mobility = 0.0

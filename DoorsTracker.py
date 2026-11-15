@@ -333,12 +333,12 @@ class MainWindow(QMainWindow):
     def _reveal_all(self) -> None:
         """The cheat: ask the auto-tracker for the seed's own map; seed_map_read gets it."""
         if not self.connected:
-            QMessageBox.information(self, "Reveal All Tiles", "This reads the seed's map from the game. Connect auto-tracking to a game first.")
+            QMessageBox.information(self, "Reveal All Tiles", "SNI connection required to cheat.")
             return
         answer = QMessageBox.question(
             self,
             "Reveal All Tiles",
-            "Replace the map on every tab with the seed's own, read from the game?",
+            "This will spoil the dungeon layouts. Are you sure?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
