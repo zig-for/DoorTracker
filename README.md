@@ -38,7 +38,7 @@ Download the latest release from the releases page. Run the `DoorsTracker_vx.x.x
 
 ### Other users
 
-Clone the repo and install the requirements.
+Clone the repo with its submodule (`git clone --recurse-submodules`, or `git submodule update --init` afterwards) and install the requirements.
 `python DoorsTracker.py`
 
 With [uv](https://docs.astral.sh/uv/) no install step is needed, dependencies come from `pyproject.toml`:
@@ -74,6 +74,12 @@ The toolbar is above the tabs: what it sets is the same in every tab. `Fit` and 
 - `Simulate` - Keep the forces running all the time, so the map keeps adjusting, including while you drag a block through it. When it is off nothing moves on its own: the only thing that rearranges the map is moving the slider, which does it in one step
 - `Follow player` - Centre the view on the player's room whenever it is not fully on screen. Off by default
 - `Join fitting rooms` - Join rooms automatically as links are made. Turn it off to only join the links you middle click
+- View -> Show Checks - Draw each dungeon check as a square on its room (on by default)
+  - Green: gettable. Grey: collected. Red: unreachable with current items. Hollow: no entrance on the map leads to it
+  - Key doors, crystal barriers, bosses and dark rooms count as passable
+  - Click a square to mark it collected, right click to take that back
+  - Drops into a dungeon and the sanctuary mirror route show a question mark, and are not counted as a way in, until you use one or click it
+  - The panel in the bottom right shows your items and keys
 - View -> Show FPS - At the right of the toolbar: how many times the tab in view was drawn in the last second, and how long the last drawing took. The map is only drawn when something changes, so it reads 0 when nothing is happening
 - Experimental -> Hide Single Route Tiles - Fully linked pass-through rooms shrink to a small pill instead of a full card
 

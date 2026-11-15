@@ -12,23 +12,13 @@ import grpc.aio
 import sni.sni_pb2 as sni_pb2
 import sni.sni_pb2_grpc as sni
 from data.doors_data import dark_tiles, door_coordinates, doors_data
+from gui.Doors.logic import DUNGEON_NUMBERS, ITEMS_AT, ITEMS_LENGTH
 
-dungeon_ids = {
-    "00": "Hyrule_Castle",
-    "02": "Hyrule_Castle",
-    "04": "Eastern_Palace",
-    "06": "Desert_Palace",
-    "14": "Tower_of_Hera",
-    "08": "Castle_Tower",
-    "0c": "Palace_of_Darkness",
-    "0a": "Swamp_Palace",
-    "10": "Skull_Woods",
-    "16": "Thieves_Town",
-    "12": "Ice_Palace",
-    "0e": "Misery_Mire",
-    "18": "Turtle_Rock",
-    "1a": "Ganons_Tower",
-}
+# After gui.Doors.logic, which makes the randomizer importable
+from ALttPDoorRandomizer.MultiClient import ITEM_SRAM_SIZE, POT_ITEMS_SRAM_START, SAVEDATA_START, SPRITE_ITEMS_SRAM_START  # noqa: E402
+
+# The "dungeon" byte, as it is read, -> the tracker's name for the dungeon
+dungeon_ids = {f"{number:02x}": tab for number, tab in DUNGEON_NUMBERS.items()}
 
 mem_addresses = {
     "race": (0x180213, 0x1),
@@ -49,9 +39,22 @@ mem_addresses = {
 }
 
 
-def build_multi_request(add_space, mem_mapping):
+# Read less often than the rest, as it is 1.9 KB together: the flags that mark checks as collected (two bytes
+# per room in each table, and one word for the dungeon prizes) and the player's items
+check_addresses = {
+    "room": (SAVEDATA_START, 0x250),
+    "pot": (POT_ITEMS_SRAM_START, ITEM_SRAM_SIZE),  # the randomizer's table of pots emptied
+    "enemy": (SPRITE_ITEMS_SRAM_START, ITEM_SRAM_SIZE),  # and of enemy drops taken
+    "prize": (SAVEDATA_START + 0x472, 0x2),
+    "items": (SAVEDATA_START + ITEMS_AT, ITEMS_LENGTH),
+    "dungeon": mem_addresses["dungeon"],  # which dungeon's keys the game is counting apart
+}
+READINGS_PER_CHECK_READ = 10
+
+
+def build_multi_request(add_space, mem_mapping, addresses=mem_addresses):
     requests = {}
-    for name, (address, size) in mem_addresses.items():
+    for name, (address, size) in addresses.items():
         request = sni_pb2.ReadMemoryRequest()
         request.requestAddressSpace = add_space
         request.requestMemoryMapping = mem_mapping
@@ -107,6 +110,8 @@ class TrackerPage(Protocol):
 
     def auto_add_lobby(self, door: str | None) -> None: ...
 
+    def auto_dropped_in(self, tile: tuple[int, int], x: float, y: float) -> None: ...
+
     def auto_add_door_link(self, door: str | None, linked_door: str | None) -> None: ...
 
 
@@ -126,6 +131,8 @@ class TrackerUI(Protocol):
     def race_rom_warning(self) -> None: ...
 
     def seed_seen(self, seed_hash: str) -> bool: ...  # False to stop tracking
+
+    def checks_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in check_addresses
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -150,6 +157,7 @@ class Stay:
     was_mirroring: bool = False
     boss_just_killed: bool = False
     resumed: bool = False  # the player did not walk in: the tracker reconnected, or another game was loaded
+    fell_in: bool = False  # the player came into the dungeon falling, down a drop
 
 
 @dataclass
@@ -216,6 +224,8 @@ async def _sni_session(
     mem_mapping = mem_mapping.memoryMapping
     mem_request = build_multi_request(dev_addrspace, mem_mapping)
     mem_request_names = list(mem_request.keys())
+    check_request = build_multi_request(dev_addrspace, mem_mapping, check_addresses)
+    readings_to_check_read = 0
     ui.connected = True
 
     if not forced_autotrack:
@@ -276,6 +286,12 @@ async def _sni_session(
                 ui.set_title("Janker Door Tracker -Auto-tracking Disabled")
                 break
 
+            if readings_to_check_read == 0:
+                readings_to_check_read = READINGS_PER_CHECK_READ
+                reply = await mem_stub.MultiRead(sni_pb2.MultiReadMemoryRequest(uri=dev_uri, requests=list(check_request.values())))
+                ui.checks_read({name: bytes(response.data) for name, response in zip(check_request, reply.responses)})
+            readings_to_check_read -= 1
+
             # if args.darkpos:
             #     is_dark = False
             # else:
@@ -319,6 +335,10 @@ async def _sni_session(
                 continue
 
             if data["falling"] != "00" and data["falling"] != "01":
+                if stay.eg_tile is None and not stay.resumed:
+                    # Falling before any room of this dungeon was read: from outside, not down a pit inside it.
+                    # A stay the tracker joined part way through says nothing either way
+                    stay.fell_in = True
                 stay.previous_tile = stay.current_tile = None
                 game.was_falling = True
                 continue
@@ -364,6 +384,9 @@ async def _sni_session(
             ):
                 stay.previous_tile = eg_tile
                 stay.current_tile = eg_tile
+                if stay.fell_in:
+                    stay.fell_in = False
+                    dp_content.auto_dropped_in(eg_tile, current_x, current_y)
                 if game.was_falling or game.was_dead or stay.resumed:
                     game.was_falling = False
                     game.was_dead = False

@@ -8,6 +8,7 @@ import grpc
 import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, door_coordinates, doors_data
+from gui.Doors.logic import ITEMS_AT
 from gui.Doors.rooms import INTERIOR_DOORS
 
 DUNGEON, TAB = "0c", "Palace_of_Darkness"
@@ -26,7 +27,7 @@ def door_facing(facing, avoid=None):
     raise AssertionError(f"no {facing} door")
 
 
-def reading(tile, x, y, lamp=True, transitioning=False, indoors=True, seed="0102030405"):
+def reading(tile, x, y, lamp=True, transitioning=False, indoors=True, seed="0102030405", falling=False, dungeon=DUNGEON):
     """What the tracker reads from memory with the player at pixel (x, y) of a supertile."""
 
     def coordinate(supertile, pixel):
@@ -40,12 +41,12 @@ def reading(tile, x, y, lamp=True, transitioning=False, indoors=True, seed="0102
         "indoors": "01" if indoors else "00",
         "link_y": coordinate(tile[1], y),
         "link_x": coordinate(tile[0], x),
-        "falling": "00",
+        "falling": "02" if falling else "00",
         "mirror": "00",
         "transitioning": "01" if transitioning else "00",
         "layer": "00",
         "dead": "00",
-        "dungeon": DUNGEON,
+        "dungeon": dungeon,
         "lampcone": "01" if lamp else "00",
         "torches": "00",
         "dungeon_room": f"{tile[1] * 16 + tile[0]:02x}",
@@ -62,10 +63,20 @@ class PlaybackOver(grpc.aio.AioRpcError):
         pass
 
 
-def play(window, app, monkeypatch, steps):
-    """Feed the readings to the real loop. Returns the map's state as it was before each labelled reading, and at the end."""
+def play(window, app, monkeypatch, steps, collected=(), equipment=None):
+    """Feed the readings to the real loop. Returns the map's state as it was before each labelled reading, and at the end.
+
+    collected: (table, room, mask) flags the game has set, for the tracker's reads of what has been collected.
+    equipment: {address in save data: byte} for the items held.
+    """
     model = window.pages[TAB].model
     seen = {}
+    tables = {name: bytearray(size) for name, (_, size) in sni_tracker.check_addresses.items()}
+    for table, room, mask in collected:
+        word = int.from_bytes(tables[table][room * 2 : room * 2 + 2], "little") | mask
+        tables[table][room * 2 : room * 2 + 2] = word.to_bytes(2, "little")
+    for address, value in (equipment or {}).items():
+        tables["items"][address - ITEMS_AT] = value
 
     def state():
         return {
@@ -91,6 +102,8 @@ def play(window, app, monkeypatch, steps):
             return Reply(memoryMapping=0)
 
         async def MultiRead(self, request):
+            if request.requests[0].requestAddress == sni_tracker.check_addresses["room"][0]:
+                return Reply(responses=[Reply(data=bytes(tables[name])) for name in sni_tracker.check_addresses])
             app.processEvents()
             if self.served == len(steps):
                 seen["end"] = state()
@@ -159,6 +172,48 @@ def test_the_tracker_stops_when_the_window_says_to_disconnect(window, app, monke
     assert list(seen) == ["reading 0"]
     assert window.pages[TAB].model.player is None
     assert "disconnected" in window.windowTitle()
+
+
+def test_checks_the_game_has_flagged_are_collected(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    in_game = reading(tile, door["x"], door["y"])
+    flagged = {
+        "Eastern Palace - Compass Chest": ("room", 0xA8, 0x10),
+        "Eastern Palace - Boss": ("room", 0xC8, 0x800),
+        "Eastern Palace - Prize": ("prize", 0, 0x2000),
+        # A key under a pot and one dropped by an enemy are flagged in the randomizer's own tables
+        "Eastern Palace - Dark Square Pot Key": ("pot", 0xBA, 0x8000 >> 4),
+        "Eastern Palace - Dark Eyegore Key Drop": ("enemy", 0x99, 0x8000 >> 3),
+        # or, as a fallback, by the room's "key taken" bit
+        "Hyrule Castle - Key Rat Key Drop": ("room", 0x21, 0x400),
+    }
+    # Flags that belong to no check, and a chest's neighbour bit, mark nothing
+    noise = [("room", 0xA8, 0x8000), ("pot", 0xBA, 0x8000 >> 5), ("enemy", 0x99, 0x8000 >> 2)]
+
+    play(window, app, monkeypatch, [("one", in_game), ("two", in_game)], collected=list(flagged.values()) + noise)
+    assert window.collected == set(flagged)
+
+
+def test_the_items_the_game_holds_reach_every_tab(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    in_game = reading(tile, door["x"], door["y"])
+    assert window.pages[TAB].model.items is None
+
+    # The hammer, and the mitts, which also lift what the glove lifts
+    play(window, app, monkeypatch, [("one", in_game), ("two", in_game)], equipment={0x34B: 1, 0x354: 2})
+    for page in window.pages.values():
+        assert page.model.items == {"Hammer", "Power Glove", "Titans Mitts"}
+
+
+def test_falling_into_a_dungeon_by_a_drop_makes_the_drop_a_way_in(window, app, monkeypatch):
+    castle = window.pages["Hyrule_Castle"].model
+    assert castle.assumed("Sewer Drop")
+    # The sewer drop's supertile, in the castle's dungeon, at about where the drop lands
+    landing = dict(tile=(1, 1), x=400, y=290, dungeon="00")
+    steps = [("falling", reading(**landing, falling=True))] + [(f"landed {k}", reading(**landing)) for k in range(3)]
+
+    play(window, app, monkeypatch, steps)
+    assert not castle.assumed("Sewer Drop")
 
 
 def test_leaving_a_dungeon_before_a_position_is_read_adds_no_entrance(window, app, monkeypatch):

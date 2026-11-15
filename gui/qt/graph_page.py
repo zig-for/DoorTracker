@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -60,8 +61,11 @@ from gui.Doors.rooms import (
     entrance_only,
     supertile,
 )
+from gui.qt.items_panel import ItemsPanel
 from gui.qt.style import (
     BACKGROUND,
+    CHECK_COLLECTED,
+    CHECK_STYLES,
     DOOR_RADIUS,
     DOOR_SELECTED,
     DOOR_STYLES,
@@ -87,6 +91,7 @@ MODEL_OPTIONS = {
     "dead_end_pull": "leaf_pull",
 }
 WORLD = 1_000_000  # scene half-extent
+CHECK_SIZE = 9.0  # side of a check's square, world units
 # A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
 # shifts by less than this on every solver step, which would otherwise redraw everything
 STILL = 0.1
@@ -94,12 +99,13 @@ STILL = 0.1
 
 @dataclass(frozen=True)
 class Hit:
-    """What is under the mouse. One field is set, or none over the background."""
+    """What is under the mouse. One of the first four is set, or none over the background."""
 
     node: Node | None = None  # a room card
     door: str | None = None  # a door dot
     icon: str | None = None  # an icon, by the door it is on
     edge: Edge | None = None  # a line between doors, or the seam of a joined link
+    check: str | None = None  # a check's square, with the node it is on
 
 
 @dataclass
@@ -424,6 +430,7 @@ class DoorsItem(QGraphicsItem):
         # Door positions are relative to the full supertile, not the drawn pieces
         self.w, self.h = (page.model.size(node) if node in page.model.compact else (THUMB, THUMB))
         self.dots = page.model.door_dots(node)
+        self.checks = page.model.check_spots(node) if page.top.settings["show_checks"] else []
         self.setZValue(3)
         # Hit shape is the dots only
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -436,6 +443,14 @@ class DoorsItem(QGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         page = self.page
+        # Checks are squares, under the door dots: green to find, red when the player's items do not get it,
+        # hollow when the map does not lead to it yet, grey once collected
+        half = CHECK_SIZE / 2
+        for check in self.checks:
+            style = CHECK_COLLECTED if check.name in page.top.collected else CHECK_STYLES[page.model.check_state(check.name)]
+            painter.setPen(QPen(QColor(style.outline), 1.5))
+            painter.setBrush(QColor(style.fill))
+            painter.drawRect(QRectF(check.x - half, check.y - half, CHECK_SIZE, CHECK_SIZE))
         for dot in self.dots:
             style = DOOR_STYLES[dot.state]
             fill, radius, outline = style.fill, DOOR_RADIUS * style.scale, style.outline
@@ -483,6 +498,7 @@ class IconItem(QGraphicsItem):
     ):
         super().__init__(parent)
         self.page = page
+        self.door = door
         self.hit = Hit(icon=door)
         self.icon = page.assets.icon(icon)
         self.lobby = lobby
@@ -504,10 +520,19 @@ class IconItem(QGraphicsItem):
             painter.setPen(QPen(QColor("#111"), 2.5, Qt.PenStyle.DashLine))
             painter.drawLine(self.origin, self.spot)
         box = QRectF(self.spot.x() - 9, self.spot.y() - 9, 18, 18)
+        # An entrance the player has not used: a white question mark on black until they do, or click it
+        assumed = bool(self.lobby) and self.page.model.assumed(self.door)
         painter.setPen(QPen(QColor("#111") if self.lobby else QColor("white"), 2 if self.lobby else 1))
-        painter.setBrush(QColor("white"))
+        painter.setBrush(QColor("black" if assumed else "white"))
         painter.drawRect(box.adjusted(-1, -1, 1, 1) if self.lobby else box)
-        if self.icon is not None:
+        if assumed:
+            font = QFont()
+            font.setPixelSize(15)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor("white"))
+            painter.drawText(box, Qt.AlignmentFlag.AlignCenter, "?")
+        elif self.icon is not None:
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
             painter.drawPixmap(QRectF(self.spot.x() - 8, self.spot.y() - 8, 16, 16), self.icon, QRectF(0, 0, 16, 16))
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
@@ -523,6 +548,21 @@ class IconItem(QGraphicsItem):
                 below = self.direction[1] >= 0
                 text_rect = QRectF(self.spot.x() - 60, self.spot.y() + (12 if below else -26), 120, 14)
                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, self.lobby.replace("_", " "))
+
+
+def one_way(model: GraphModel, edge: Edge) -> tuple[str, str] | None:
+    """(from, to) for an edge that is only gone through one way; None for one gone through both ways."""
+    a, b = edge.a, edge.b
+    if edge.kind in (EdgeKind.WARP, EdgeKind.HOLE, EdgeKind.DROP):
+        if edge.both_ways:
+            return None
+    elif edge.kind is EdgeKind.INTERIOR:
+        return None
+    elif not model.decoupled() and (door_vector(a) is not None or "Stairs" in a or "Ladder" in a):
+        return None
+    # A tracked drop can be stored either way round: it goes from the pit to the landing
+    backwards = not model.decoupled() and door_direction(a) == "Up" and door_direction(b) == "Dn"
+    return (b, a) if backwards else (a, b)
 
 
 class LinkItem(QGraphicsPathItem):
@@ -546,14 +586,9 @@ class LinkItem(QGraphicsPathItem):
         self.facing_a = door_vector(a) if not model.is_hidden_dark(self.node_a.tile) else None
         self.facing_b = door_vector(b) if not model.is_hidden_dark(self.node_b.tile) else None
         self.same_block = model.blocks.root.get(self.node_a) == model.blocks.root.get(self.node_b)
-        if edge.kind in (EdgeKind.WARP, EdgeKind.HOLE, EdgeKind.DROP):
-            self.one_way = not edge.both_ways
-        else:
-            self.one_way = not self.interior and (
-                model.decoupled() or (door_vector(a) is None and "Stairs" not in a and "Ladder" not in a)
-            )
-        # Tracked drops can be stored either way round; the arrow always points pit -> landing
-        self.backwards = not model.decoupled() and door_direction(a) == "Up" and door_direction(b) == "Dn"
+        way = one_way(model, edge)
+        self.one_way = way is not None
+        self.backwards = way == (b, a)  # the arrow's head is at a
         self.setZValue(2)
         self.set_state(faded=False, strong=False)
         self.update_path()
@@ -805,6 +840,10 @@ class GraphPage(QWidget):
         buttons.addWidget(fit)
         buttons.addWidget(relayout)
         panel.adjustSize()
+        # The items held, over the opposite corner; see set_items. Its tab opens and closes it in every tab
+        self.items_panel = ItemsPanel(self.view, self._items_tab_clicked, top.set_held)
+        self.items_panel.set_open(top.settings["show_items"])
+        self._place_items_panel()
         # View -> Show FPS. The readout is on the window's toolbar: a widget over the map makes the map
         # redraw whenever it changes, which would add to the count
         self._frames: deque[float] = deque()  # when each frame of the last second was drawn
@@ -852,6 +891,9 @@ class GraphPage(QWidget):
             for label in self._labels.values():
                 label.setVisible(value)
             self.scene.update()
+        elif name == "show_items":
+            self.items_panel.set_open(value)
+            self._place_items_panel()
         elif name == "show_repulsion":
             if self._reach is not None:
                 self._reach.setVisible(value)
@@ -1021,8 +1063,24 @@ class GraphPage(QWidget):
         self._settling_size = False
 
     def view_resized(self):
+        self._place_items_panel()
         if self._settling_size and self.model.pos:
             self.fit_view()
+
+    def set_items(self, items: frozenset[str] | None, small_keys: Mapping[str, int]) -> None:
+        """What the player holds, as the auto-tracker just read it. small_keys: how many, by dungeon."""
+        self.model.set_items(items)
+        self.items_panel.show_held(items, small_keys)
+        self._place_items_panel()
+        self.scene.update()
+
+    def _items_tab_clicked(self, is_open: bool) -> None:
+        self.top.set_option("show_items", is_open)
+
+    def _place_items_panel(self) -> None:
+        """Keep the items panel in the bottom right corner of the map."""
+        panel = self.items_panel
+        panel.move(self.view.width() - panel.width(), self.view.height() - panel.height())
 
     def relayout(self):
         # Can take a few seconds on a big map
@@ -1077,10 +1135,18 @@ class GraphPage(QWidget):
             found = getattr(item, "hit", None)
             item = item.parentItem()
         hit = found if found is not None else Hit()
+        scene_pos = self.view.mapToScene(view_pos)
         if hit.icon is None:
-            door = self.door_at(self.view.mapToScene(view_pos))
+            door = self.door_at(scene_pos)
             if door is not None:
                 return Hit(door=door)
+        if hit.node is not None and hit.node in self._doors:
+            # Check squares are not separate items either
+            x, y = self.model.pos[hit.node]
+            reach = max(CHECK_SIZE / 2, 5 / self.view.zoom())
+            for check in self._doors[hit.node].checks:
+                if abs(scene_pos.x() - x - check.x) <= reach and abs(scene_pos.y() - y - check.y) <= reach:
+                    return Hit(node=hit.node, check=check.name)
         return hit
 
     # ------------------------------------------------------------------- mouse
@@ -1151,6 +1217,13 @@ class GraphPage(QWidget):
             return
         if press.hit.door is not None:
             self._door_clicked(press.hit.door)
+        elif press.hit.check is not None:
+            # A click collects and a right click takes it back, here as for the drops; see _context
+            self.top.set_collected(press.hit.check, True)
+        elif press.hit.icon is not None and entrance_only(press.hit.icon):
+            # A drop or the mirror route: the player can use it
+            self.model.set_entrance_used(press.hit.icon, True)
+            self.rebuild()
         elif press.hit == Hit() and self.selected_door:
             self.cancel_selection()
 
@@ -1179,24 +1252,29 @@ class GraphPage(QWidget):
         if self.selected_door is None:
             if model.has_target(door):
                 return
-            self.selected_door = door
-            self._repaint_doors()
+            self._select(door)
+            self.rebuild()
             return
         if door == self.selected_door:
             self.cancel_selection()
             return
         if model.has_target(door) and not model.decoupled():
             return
-        source, self.selected_door = self.selected_door, None
+        source = self.selected_door
+        self._select(None)
         model.add_link(source, door)
         self.rebuild()
 
+    def _select(self, door: str | None) -> None:
+        """Set the first door of a link being made, or None. While there is one the map shows every door."""
+        self.selected_door = door
+        self.model.linking = door is not None
+
     def cancel_selection(self):
-        self.selected_door = None
-        if self._rubber is not None:
-            self.scene.removeItem(self._rubber)
-            self._rubber = None
-        self._repaint_doors()
+        if self.selected_door is None:
+            return
+        self._select(None)
+        self.rebuild()
 
     def _draw_rubber(self, scene_pos: QPointF) -> None:
         """Draw the line from the door being linked to the mouse."""
@@ -1232,7 +1310,8 @@ class GraphPage(QWidget):
             focus = model.rooms.node(door)
         elif hit.edge is not None:
             edge = hit.edge
-            text = f"{edge.a}  ↔  {edge.b}"
+            way = one_way(model, edge)
+            text = f"{way[0]}  →  {way[1]}" if way else f"{edge.a}  ↔  {edge.b}"
             if edge.link in model.blocks.joined:
                 text += "   (joined — middle click to split)"
             elif edge.link is not None and model.join_offset(edge.a, edge.b) is not None:
@@ -1241,11 +1320,14 @@ class GraphPage(QWidget):
                 if edge.kind in (EdgeKind.WARP, EdgeKind.HOLE):
                     # The far end is a port, not a door: name the room it lands in
                     text = f"{edge.a}  →  {model.rooms.title(model.rooms.node(edge.b))}"
-                text += "   (warp)" if edge.kind is EdgeKind.WARP else "   (vanilla drop, assumed)"
+                if edge.kind is EdgeKind.WARP:
+                    text += "   (warp)"
             focus = self._focus
         elif hit.node is not None:
             node = hit.node
-            if model.is_hidden_dark(node.tile):
+            if hit.check is not None:
+                text = hit.check + ("   (collected)" if hit.check in self.top.collected else "")
+            elif model.is_hidden_dark(node.tile):
                 text = "Dark room"
             else:
                 text = f"{', '.join(model.rooms.regions(node)[:4]) or model.rooms.title(node)}   (EG {node.x},{node.y})"
@@ -1286,7 +1368,12 @@ class GraphPage(QWidget):
 
     def _context(self, event, hit: Hit, scene_pos: QPointF) -> None:
         model = self.model
-        if hit.door is not None:
+        if hit.check is not None:
+            self.top.set_collected(hit.check, False)
+        elif hit.icon is not None and entrance_only(hit.icon):
+            model.set_entrance_used(hit.icon, False)
+            self.rebuild()
+        elif hit.door is not None:
             icon = self.top.pick_icon(self.tab_world)
             if icon:
                 import data.doors_sprite_data as sprites
@@ -1301,23 +1388,32 @@ class GraphPage(QWidget):
             model.remove_annotation(hit.icon)
             self.rebuild()
         elif hit.node is not None:
+            # The menus say what was chosen and this acts on it. An action is given no lambda to call: Qt would keep
+            # one that holds this page alive, and the page and its window with it
             node = hit.node
             menu = QMenu(self)
-            if node in model.fixed:
-                menu.addAction("Unpin", lambda: self.set_pinned(node, False))
-            else:
-                menu.addAction("Pin in place", lambda: self.set_pinned(node, True))
+            pinned = node in model.fixed
+            pin = menu.addAction("Unpin" if pinned else "Pin in place")
+            remove = None
             if node.tile not in mandatory_tiles[self.tab_world]:
                 menu.addSeparator()
-                menu.addAction("Remove supertile…", lambda: self.remove_tile(node.tile))
-            menu.exec(event.globalPosition().toPoint())
+                remove = menu.addAction("Remove supertile…")
+            chosen = menu.exec(event.globalPosition().toPoint())
+            menu.deleteLater()
+            if chosen is pin:
+                self.set_pinned(node, not pinned)
+            elif chosen is not None and chosen is remove:
+                self.remove_tile(node.tile)
         else:
             menu = QMenu(self)
             menu.addAction("Fit to window", self.fit_view)
             menu.addAction("Re-layout", self.relayout)
             menu.addAction("Unpin all", self.unpin_all)
-            menu.addAction("Add supertile here…", lambda: self.add_tile_from_picker(scene_pos.x(), scene_pos.y()))
-            menu.exec(event.globalPosition().toPoint())
+            add = menu.addAction("Add supertile here…")
+            chosen = menu.exec(event.globalPosition().toPoint())
+            menu.deleteLater()
+            if chosen is add:
+                self.add_tile_from_picker(scene_pos.x(), scene_pos.y())
 
     def set_pinned(self, node: Node, pinned: bool) -> None:
         self.model.set_pinned(node, pinned)
@@ -1371,13 +1467,13 @@ class GraphPage(QWidget):
 
     def init_page(self):
         self.model.reset()
-        self.selected_door = None
+        self._select(None)
         self._needs_fit = True
         self.rebuild()
 
     def load_yaml(self, data):
         had_positions = self.model.load(data)
-        self.selected_door = None
+        self._select(None)
         camera = data.get("camera")
         self._needs_fit = not (camera and had_positions)
         self.rebuild()
@@ -1404,11 +1500,20 @@ class GraphPage(QWidget):
         added = self.model.auto_add_lobby(door)
         self._arrived(door, added)
 
+    def auto_dropped_in(self, tile: Tile, x: float, y: float) -> None:
+        """The player fell into the dungeon from outside and landed at (x, y) of a supertile."""
+        used = len(self.model.used_entrances)
+        self.model.dropped_in(tile, x, y)
+        if len(self.model.used_entrances) != used:
+            self.rebuild()
+
     def _arrived(self, door: str | None, changed: bool) -> None:
         """Tell the model which door the player entered by, then refresh."""
+        used = len(self.model.used_entrances)
         if door is not None:
             self.model.arrive(door)
-        if changed:
+        # Coming in by a drop or the mirror route for the first time makes it a way in: its marker and the checks change
+        if changed or len(self.model.used_entrances) != used:
             self.rebuild()
         elif self.model.located is not None and self.model.located not in self._rooms:
             self.redraw_canvas()

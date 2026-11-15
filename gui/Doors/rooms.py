@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import NamedTuple
 
 from data.doors_data import (
+    DROP_ENTRANCES,
     door_coordinates,
     doors_data,
     doors_to_regions,
@@ -98,12 +99,13 @@ for _pair in interior_doors:
     INTERIOR_DOORS.update(_pair)
 
 # Doors that only exist as a way into the dungeon, drawn as entrances rather than ports
-ENTRANCE_ONLY_DOORS = ("Sanctuary Mirror Route", "Sewer Drop")
+DROPS_IN = frozenset(DROP_ENTRANCES.values())  # where a drop into a dungeon from outside lands
+ENTRANCE_ONLY_DOORS = DROPS_IN | {"Sanctuary Mirror Route"}
 
 
 def entrance_only(door: str) -> bool:
     """Whether a door is only a way into the dungeon. It gets an entrance marker and no dot."""
-    return door in ENTRANCE_ONLY_DOORS or door.startswith("Skull Drop Entrance")
+    return door in ENTRANCE_ONLY_DOORS
 
 MANUAL_REGIONS_ADDED = {
     "Eastern Hint Tile WN": "Eastern Hint Tile Blocked Path",
@@ -135,6 +137,8 @@ for _door_set in [logical_connections, interior_doors, falldown_pits, dungeon_wa
 DEFAULT_DOORS.update(MANUAL_DROPS)
 # Keys of DEFAULT_DOORS that cannot be gone back through: holes, warps and drops
 ONE_WAY = {name for name, _target in list(falldown_pits) + list(dungeon_warps)} | set(MANUAL_DROPS)
+# The holes among them. A seed can send a hole somewhere else; a warp always goes where it goes
+HOLES = {name for name, _target in falldown_pits} | set(MANUAL_DROPS)
 
 # Rooms with no doors, by region
 DOORLESS_ROOMS = {
@@ -143,10 +147,12 @@ DOORLESS_ROOMS = {
     "Hera Fairies": DoorlessRoom((7, 10), "Tower_of_Hera", 0.27, 0.25),
 }
 
-# Known warp tile positions. warp: (tile, landing), each 0..1 in its supertile picture
+# Known warp tile and hole positions. warp or hole: (start, landing), each 0..1 in its supertile picture
 WARP_SPOTS = {
     # Under the moving spikes; lands at the right of the Firesnake room
     "GT Spike Crystals Warp": ((0.885, 0.26), (0.89, 0.265)),
+    # Off the east side of the landing, where its rail has a gap. A fall lands at the same place in the room below
+    "PoD Big Key Landing Hole": ((0.57, 0.27), (0.57, 0.27)),
 }
 
 
