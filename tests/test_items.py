@@ -3,7 +3,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-from gui.Doors.logic import BIG_KEYS, ITEMS_AT, ITEMS_LENGTH, READABLE, small_keys
+from gui.Doors.logic import BIG_KEYS, ITEMS_AT, ITEMS_LENGTH, READABLE, hearts_held, small_keys
 from gui.qt.items_panel import BIG_KEY_PICTURE, PICTURE_NAMES, PICTURES, SHORT_NAMES, SLOTS, clicked, picture
 
 
@@ -83,6 +83,13 @@ def test_clicking_in_the_panel_sets_what_is_held_in_every_tab(window, app):
 
     QTest.mouseClick(shown["Hammer"], right)
     assert other.model.items == {"Big Key (Thieves Town)"}
+
+    # Hearts go up from the three the game starts with, and not back below them
+    QTest.mouseClick(panel.hearts, left)
+    assert hearts_held(other.model.items) == 4 and other.items_panel.hearts.toolTip() == "4 hearts"
+    QTest.mouseClick(panel.hearts, right)
+    QTest.mouseClick(panel.hearts, right)
+    assert hearts_held(other.model.items) == 3
 
 
 def picture_in_cell(name):

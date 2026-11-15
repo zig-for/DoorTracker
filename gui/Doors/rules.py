@@ -5,20 +5,20 @@ CollectionState in BaseClasses.py defines the tests they use, like can_lift_rock
 written and not run. The randomizer only has rules once it has generated a whole seed, and by then one that holds
 in every seed looks the same as one that depends on that seed's settings.
 
-Only what holds in every seed is kept. A rule set under an "if" depends on the seed, and so do key doors, crystal
-barriers, bosses and dark rooms; and the tracker cannot read events like "Open Floodgate". All of those count as
-met, so a rule here never asks for more than the randomizer does.
+Only what holds in every seed is kept. A rule set under an "if" depends on the seed, and so do key doors, bosses
+and dark rooms; and the tracker cannot read events like "Open Floodgate". All of those count as met, so a rule
+here never asks for more than the randomizer does.
 """
 
 import ast
 
 from data.doors_data import regions_to_doors
 from gui.Doors.checks import checks
-from gui.Doors.logic import READABLE, Rule
+from gui.Doors.logic import BLUE, EITHER, HEARTS, ORANGE, READABLE, Rule
 from gui.Doors.randomizer import dungeon_regions, syntax
 
 # After gui.Doors.randomizer, which makes the randomizer importable
-from ALttPDoorRandomizer import Rules  # noqa: E402
+from ALttPDoorRandomizer import Doors, Rules  # noqa: E402
 from ALttPDoorRandomizer.BaseClasses import CollectionState  # noqa: E402
 from ALttPDoorRandomizer.Regions import location_events  # noqa: E402  location -> the event it gives
 
@@ -30,6 +30,8 @@ TESTS_BY_HAND = {
     "can_use_bombs": "Bombs",  # needs the bomb bag where there is one: read as room for bombs
     "can_shoot_arrows": "Bow",  # also needs arrows to buy, in retro
 }
+# Tests of a region, not of what is held: the crystal barriers that are down when it is reached
+COLOURS = {"can_reach_blue": BLUE, "can_reach_orange": ORANGE}
 
 
 def called(node: ast.AST) -> str | None:
@@ -66,6 +68,7 @@ class Reader:
     def __init__(self, events: set[str]) -> None:
         """events: what the randomizer counts as items that the tracker works out for itself; see read()."""
         self.events = events
+        self.regions = {region.name for region in dungeon_regions()}  # the ones a rule can ask about
         # The tests of CollectionState, by name
         self.tests = {f.name: f for f in syntax(CollectionState).body if isinstance(f, ast.FunctionDef)}
 
@@ -93,8 +96,23 @@ class Reader:
             return item if item is not None and (item in READABLE or item in self.events) and len(node.args) == 2 else True
         if name in ("and_rule", "or_rule"):
             return combine("all" if name == "and_rule" else "any", [self.rule(a) for a in node.args])
+        if name == "not_rule":
+            inner = self.rule(node.args[0])
+            # What is not understood is met, and the lack of it is met too
+            return True if isinstance(inner, bool) else ("not", inner)
+        if name == "Reach" and len(node.args) == 3 and text(node.args[1]) == "Region":
+            region = text(node.args[0])
+            return ("reached", region) if region in self.regions else True
         if name == "Primitive" and len(node.args) == 2:
             return self.test(str(text(node.args[0])))
+        if name == "Primitive" and text(node.args[0]) == "has_hearts" and len(node.args) == 3:
+            count = node.args[2]
+            return HEARTS[count.value - 1] if isinstance(count, ast.Constant) and isinstance(count.value, int) else True
+        if name == "Primitive" and text(node.args[0]) in COLOURS and len(node.args) == 3:
+            # A region reached with the blue crystal barriers down, or the orange
+            asked = node.args[1]
+            region = text(asked.args[0]) if isinstance(asked, ast.Call) and called(asked) == "get_region" else None
+            return ("down", region, COLOURS[str(text(node.args[0]))]) if region in self.regions else True
         on_self = isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "self"
         if on_self and name in self.tests and len(node.args) == 1:
             return self.test(name)
@@ -156,6 +174,39 @@ def read() -> tuple[dict[str, Rule], dict[str, Rule], dict[str, str], dict[str, 
     return passages, of_checks, regions, happen
 
 
+def door_of(node: ast.expr) -> str | None:
+    """The door a chain of calls is about: world.get_door(name, player).x() or create_door(player, name, kind).x().y()."""
+    while isinstance(node, ast.Call):
+        if called(node) == "get_door":
+            return text(node.args[0])
+        if called(node) == "create_door":
+            return text(node.args[1])
+        if not isinstance(node.func, ast.Attribute):
+            return None
+        node = node.func.value
+    return None
+
+
+def read_crystals() -> dict[str, int]:
+    """Door or passage -> the crystal barriers that must be down to go through it, which are the ones down after:
+    BLUE or ORANGE. EITHER for the way back from where a crystal switch is hit: after it, whichever the player
+    likes."""
+    names = {"Blue": BLUE, "Orange": ORANGE, "Either": EITHER}
+    found = {}
+    for node in ast.walk(syntax(Doors.create_doors)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("barrier", "c_switch"):
+            door = door_of(node.func.value)
+            assert door is not None
+            if node.func.attr == "c_switch":
+                found[door] = EITHER
+            else:
+                colour = node.args[0]
+                assert isinstance(colour, ast.Attribute)
+                found[door] = names[colour.attr]
+    return found
+
+
 # What leaving a region through a door or passage takes; what collecting a check takes, once in its region; the
 # region each check is in; and event -> (the region it is done in, what doing it takes)
 passage_rules, check_rules, check_regions, events = read()
+crystals = read_crystals()
