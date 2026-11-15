@@ -5403,8 +5403,8 @@ door_coordinates.update(
                 "name": "GT Bob's Room SE",
             },
             {
-                "x": 448,
-                "y": 448,
+                "x": 384,
+                "y": 392,
                 "loc_type": "door",
                 "button": 1001,
                 "name": "GT Bob's Room Hole",
