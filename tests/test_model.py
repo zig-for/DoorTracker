@@ -93,6 +93,7 @@ def decorated_map():
     model.set_pinned(model.rooms.node(model.door_links[3].door), True)
     spare = [d for tile in model.tiles for d in open_doors(model, tile)]
     model.annotate(spare[0], "Bow", [])
+    model.set_boss((4, 10), "Mothula")
     model.auto_add_lobby(next(d for d in spare[1:] if DOORS[d].facing == "So"))
 
     # Still contested: the default order would join different links
@@ -109,6 +110,7 @@ def contents(model):
         "joined": joined_doors(model),
         "lobbies": [(lobby.door, lobby.lobby) for lobby in model.lobby_doors],
         "icons": model.special_doors,
+        "bosses": model.bosses,
         "pinned": model.fixed,
         "lit": {tile: state.has_been_lit for tile, state in model.tiles.items()},
         "positions": {node: (round(x, 1), round(y, 1)) for node, (x, y) in model.pos.items()},
@@ -169,6 +171,17 @@ def test_an_icon_put_on_an_entrance_takes_its_place():
         model.annotate(door, icon, lobbies)
         assert [(lobby.door, lobby.lobby) for lobby in model.lobby_doors if lobby.door == door] == entrances
         assert model.special_doors[door] == icon
+
+
+def test_a_boss_room_shows_the_boss_picked_for_it():
+    model = new_model("Eastern_Palace")
+    tile = (8, 12)
+    model.add_tile(tile, has_been_lit=True)
+    (node,) = [n for n in model.nodes() if n.tile == tile and model.boss_spots(n)]
+    for picked in (None, "Mothula", None):
+        model.set_boss(tile, picked)
+        (spot,) = model.boss_spots(node)
+        assert spot.boss == picked
 
 
 def test_removing_a_supertile_removes_everything_on_it():

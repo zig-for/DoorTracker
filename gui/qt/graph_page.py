@@ -45,6 +45,7 @@ from data.doors_data import mandatory_tiles
 from data.doors_sprite_data import ITEM_SHEET_PATH
 from data.room_bounds import room_bounds
 from data.worlds_data import World
+from gui.Doors import bosses
 from gui.Doors.graph_model import LOBBY_REACH, THUMB, Edge, GraphModel, TileState
 from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
@@ -80,7 +81,7 @@ from gui.qt.style import (
 if TYPE_CHECKING:
     from DoorsTracker import MainWindow
 
-MIN_ZOOM, MAX_ZOOM = 0.1, 4.0
+MIN_ZOOM, MAX_ZOOM = 0.1, 8.0
 # Settings that are attributes of the model: setting -> attribute
 MODEL_OPTIONS = {
     "show_all_doors": "show_all_doors",
@@ -91,6 +92,7 @@ MODEL_OPTIONS = {
 }
 WORLD = 1_000_000  # scene half-extent
 CHECK_SIZE = 9.0  # side of a check's square, world units
+BOSS_SIZE = 12.0  # side of a boss room's boss
 # A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
 # shifts by less than this on every solver step, which would otherwise redraw everything
 STILL = 0.1
@@ -105,6 +107,7 @@ class Hit:
     icon: str | None = None  # an icon, by the door it is on
     edge: Edge | None = None  # a line between doors
     check: str | None = None  # a check's square, with the node it is on
+    boss: Tile | None = None  # a boss room's boss, with the node it is on
 
 
 @dataclass
@@ -155,6 +158,8 @@ class Assets:
         self._thumbnails: dict[tuple[Tile, int], QPixmap] = {}
         self._sheet: QPixmap | None = None
         self._icons: dict[str, QPixmap] = {}
+        self._boss_sheet: QPixmap | None = None
+        self._bosses: dict[str, QPixmap] = {}
 
     def thumbnail(self, tile: Tile, size: int) -> QPixmap:
         """Supertile picture at an exact size, for the supertile picker."""
@@ -204,6 +209,14 @@ class Assets:
             if size >= wanted_px:
                 return levels[size]
         return levels[512]
+
+    def boss(self, name: str) -> QPixmap:
+        """A boss's icon, cut from the sheet of them."""
+        if name not in self._bosses:
+            if self._boss_sheet is None:
+                self._boss_sheet = QPixmap(str(bosses.SHEET_PATH))
+            self._bosses[name] = self._boss_sheet.copy(bosses.BOSSES.index(name) * bosses.ICON, 0, bosses.ICON, bosses.ICON)
+        return self._bosses[name]
 
     def icon(self, name: str) -> QPixmap | None:
         import data.doors_sprite_data as sprites
@@ -464,6 +477,7 @@ class DoorsItem(QGraphicsItem):
         self.w, self.h = (page.model.size(node) if node in page.model.compact else (THUMB, THUMB))
         self.dots = page.model.door_dots(node)
         self.checks = page.model.check_spots(node) if page.top.settings["show_checks"] else []
+        self.bosses = page.model.boss_spots(node)
         self.setZValue(3)
         # Hit shape is the dots only
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -484,6 +498,28 @@ class DoorsItem(QGraphicsItem):
             painter.setPen(QPen(QColor(style.outline), 1.5))
             painter.setBrush(QColor(style.fill))
             painter.drawRect(QRectF(check.x - half, check.y - half, CHECK_SIZE, CHECK_SIZE))
+        # A boss room's boss. Until the player has picked it, a skull with a question mark on the corner
+        half = BOSS_SIZE / 2
+        for boss in self.bosses:
+            box = QRectF(boss.x - half, boss.y - half, BOSS_SIZE, BOSS_SIZE)
+            picture = page.assets.boss(boss.boss) if boss.boss else page.assets.icon("Skull")
+            assert picture is not None  # the sheet has a skull
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+            painter.drawPixmap(box, picture, QRectF(picture.rect()))
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.setPen(QPen(QColor("#111"), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(box)
+            if not boss.boss:
+                corner = QRectF(box.right() - 6, box.top(), 6, 7)
+                font = QFont()
+                font.setPixelSize(7)
+                font.setBold(True)
+                painter.setFont(font)
+                # White on a black edge, to read over the skull
+                for dx, dy, colour in ((0.5, 0.5, "black"), (-0.5, -0.5, "black"), (0.5, -0.5, "black"), (-0.5, 0.5, "black"), (0, 0, "white")):
+                    painter.setPen(QColor(colour))
+                    painter.drawText(corner.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, "?")
         for dot in self.dots:
             style = DOOR_STYLES[dot.state]
             fill, radius, outline = style.fill, DOOR_RADIUS * style.scale, style.outline
@@ -1155,6 +1191,9 @@ class GraphPage(QWidget):
             for check in self._doors[hit.node].checks:
                 if abs(scene_pos.x() - x - check.x) <= reach and abs(scene_pos.y() - y - check.y) <= reach:
                     return Hit(node=hit.node, check=check.name)
+            for boss in self._doors[hit.node].bosses:
+                if abs(scene_pos.x() - x - boss.x) <= BOSS_SIZE / 2 and abs(scene_pos.y() - y - boss.y) <= BOSS_SIZE / 2:
+                    return Hit(node=hit.node, boss=boss.tile)
         return hit
 
     # ------------------------------------------------------------------- mouse
@@ -1228,6 +1267,12 @@ class GraphPage(QWidget):
         elif press.hit.check is not None:
             # A click collects and a right click takes it back, here as for the drops; see _context
             self.top.set_collected(press.hit.check, True)
+        elif press.hit.boss is not None:
+            # A click picks the room's boss and a right click takes that back; see _context
+            boss = self.top.pick_boss()
+            if boss:
+                self.model.set_boss(press.hit.boss, boss)
+                self.rebuild()
         elif press.hit.icon is not None and entrance_only(press.hit.icon):
             # A drop or the mirror route: the player can use it
             self.model.set_entrance_used(press.hit.icon, True)
@@ -1335,6 +1380,8 @@ class GraphPage(QWidget):
             node = hit.node
             if hit.check is not None:
                 text = hit.check + ("   (collected)" if hit.check in self.top.collected else "")
+            elif hit.boss is not None:
+                text = f"Boss: {model.bosses.get(hit.boss, '?   (click to pick)')}"
             elif model.is_hidden_dark(node.tile):
                 text = "Dark room"
             else:
@@ -1378,6 +1425,9 @@ class GraphPage(QWidget):
         model = self.model
         if hit.check is not None:
             self.top.set_collected(hit.check, False)
+        elif hit.boss is not None:
+            model.set_boss(hit.boss, None)
+            self.rebuild()
         elif hit.icon is not None and entrance_only(hit.icon):
             model.set_entrance_used(hit.icon, False)
             self.rebuild()

@@ -141,6 +141,22 @@ def test_a_door_marked_as_somewhere_the_player_can_get_to_is_a_way_in():
     assert model.check_state(name) is CheckState.OPEN
 
 
+def test_a_boss_rooms_drops_take_beating_the_boss_picked_for_it():
+    name = "Eastern Palace - Boss"
+    tile = checks[name]["tile"]
+    model = new_model("Eastern_Palace")
+    model.add_tile(tile, has_been_lit=True)
+    model.add_lobby_door(next(door for door in regions_to_doors["Eastern Boss"] if door in DOORS), "Eastern")
+    model.update()
+    model.set_items(frozenset())
+    # A boss not picked counts as beaten
+    assert model.check_state(name) is CheckState.OPEN
+    model.set_boss(tile, "Moldorm")
+    assert model.check_state(name) is CheckState.BLOCKED
+    model.set_items(frozenset({"Hammer"}))
+    assert model.check_state(name) is CheckState.OPEN
+
+
 def test_a_check_the_map_does_not_lead_to_that_takes_an_item_not_held_is_both():
     name = "Thieves' Town - Big Chest"
     model = new_model("Thieves_Town")

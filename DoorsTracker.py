@@ -37,6 +37,7 @@ from data.vanilla_data import vanilla_layout_optimized
 from data.worlds_data import World, dungeon_worlds
 from gui import files
 from gui.Doors import rooms, seed_map
+from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import checks
 from gui.Doors.layout import REPEL_RANGE
 from gui.Doors.logic import items_held, small_keys
@@ -167,6 +168,31 @@ class IconPicker(QDialog):
         button.setObjectName(name)
         button.clicked.connect(self._pick)
         return button
+
+    def _pick(self):
+        self.choice = self.sender().objectName()
+        self.accept()
+
+
+class BossPicker(QDialog):
+    """The bosses a boss room can have, to pick the one it has."""
+
+    ACROSS = 5
+
+    def __init__(self, parent, assets):
+        super().__init__(parent)
+        self.setWindowTitle("Boss")
+        self.choice = None
+        grid = QGridLayout(self)
+        grid.setSpacing(2)
+        for place, boss in enumerate(BOSSES):
+            button = QToolButton()
+            button.setIcon(QIcon(assets.boss(boss).scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))
+            button.setIconSize(QSize(64, 64))
+            button.setToolTip(boss)
+            button.setObjectName(boss)
+            button.clicked.connect(self._pick)
+            grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
 
     def _pick(self):
         self.choice = self.sender().objectName()
@@ -785,6 +811,10 @@ class MainWindow(QMainWindow):
     def pick_icon(self, world: World, taken: Container[str]) -> str | None:
         """taken: the entrances the map already has."""
         dialog = IconPicker(self, self.assets, world, taken)
+        return dialog.choice if dialog.exec() else None
+
+    def pick_boss(self) -> str | None:
+        dialog = BossPicker(self, self.assets)
         return dialog.choice if dialog.exec() else None
 
     def pick_eg_tile(self, page: GraphPage) -> rooms.Tile | None:

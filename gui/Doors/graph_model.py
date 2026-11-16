@@ -27,10 +27,11 @@ from data.doors_data import (
 from data.doors_sprite_data import REACHABLE
 from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
+from gui.Doors.bosses import BOSS_ROOMS
 from gui.Doors.checks import checks
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, holds
-from gui.Doors.rules import check_regions, check_rules, crystals, events, passage_rules
+from gui.Doors.rules import boss_rules, check_regions, check_rules, crystals, events, passage_rules
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
@@ -132,6 +133,14 @@ class CheckSpot:
     y: float
 
 
+@dataclass(frozen=True)
+class BossSpot:
+    tile: Tile  # the boss room
+    boss: str | None  # None until the player picks it
+    x: float  # relative to the node's centre, world units
+    y: float
+
+
 class CheckState(Enum):
     OPEN = "open"  # can be walked to and collected
     BLOCKED = "blocked"  # takes items the player does not hold, to collect or on every route to it
@@ -209,6 +218,7 @@ class GraphModel:
         self.door_links: list[Link] = []
         self.lobby_doors: list[LobbyDoor] = []
         self.special_doors: dict[str, str] = {}  # door -> icon
+        self.bosses: dict[Tile, str] = {}  # boss room -> the boss the player picked for it
         self.kept_expanded: set[Node] = set()  # see toggle_expanded
         self.sanc_dungeon = False
 
@@ -547,6 +557,7 @@ class GraphModel:
         self.lobby_doors = [x for x in self.lobby_doors if x.door not in doors]
         for door in doors:
             self.special_doors.pop(door, None)
+        self.bosses.pop(tile, None)
         del self.tiles[tile]
         for node in [n for n in self.pos if n.tile == tile]:
             del self.pos[node]
@@ -633,6 +644,10 @@ class GraphModel:
                 self._join_rank[self.door_links[n]] = rank
         self.lobby_doors = [LobbyDoor(x["door"], x["lobby"]) for x in data.get("lobby_doors", [])]
         self.special_doors = dict(data.get("special_doors", {}))
+        self.bosses = {}
+        for key, boss in (data.get("bosses") or {}).items():
+            column, row = str(key).split("__")
+            self.bosses[(int(column), int(row))] = boss
         self.used_entrances = set(data.get("used_entrances") or [])
         self.tiles = {}
         self.pos = {}
@@ -714,6 +729,7 @@ class GraphModel:
                 if n.tile in self.tiles and self.real_rooms.part_count(n.tile) > 1
             ),
             "special_doors": dict(self.special_doors),
+            "bosses": {f"{x}__{y}": boss for (x, y), boss in self.bosses.items()},
             "used_entrances": sorted(self.used_entrances),
             "expanded": sorted(f"{n.x}__{n.y}__{n.part}" for n in self.kept_expanded),
             "graph_layout": {
@@ -881,7 +897,8 @@ class GraphModel:
         ORANGE, or EITHER for both), and what the player holds by the end: their items, and what gets done on the
         way, like draining the swamp.
 
-        A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met.
+        A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met,
+        and, out of a boss room whose boss the player has picked, when that boss can be beaten.
         What is reached stays reached. A rule can ask for a region reached, so every way out is tried again until
         no more is reached. Only then is what got done on the way counted, and every way out tried again: a rule
         can ask for something not done, and is asked before it is.
@@ -893,6 +910,8 @@ class GraphModel:
         reached: dict[str, int] = {}
         held = items or frozenset()
         queue: deque[str] = deque()
+        # Way out of a boss room -> what beating the boss picked for the room takes
+        beaten = {way: boss_rules[boss][BOSS_ROOMS[tile].on_ice] for tile, boss in self.bosses.items() if tile in BOSS_ROOMS for way in BOSS_ROOMS[tile].ways}
 
         def arrive(name: str, down: int) -> None:
             for region in regions_at(name):
@@ -912,7 +931,8 @@ class GraphModel:
                     # A way through a barrier takes its colour down, and leaves it down. The way back from hitting
                     # a crystal switch leaves whichever the player likes
                     barrier = crystals.get(way_out, 0)
-                    if items is None or ((not barrier or down & barrier) and holds(passage_rules.get(way_out, True), held, reached)):
+                    rules = (passage_rules.get(way_out, True), beaten.get(way_out, True))
+                    if items is None or ((not barrier or down & barrier) and all(holds(rule, held, reached) for rule in rules)):
                         for target in leads.get(way_out, ()):
                             arrive(target, barrier or down)
             if items is None:
@@ -1573,6 +1593,24 @@ class GraphModel:
             state = DoorState.INTERIOR if interior else DoorState.LINKED if linked else DoorState.OPEN
             dots.append(DoorDot(door, ox, oy, state))
         return dots
+
+    def boss_spots(self, node: Node) -> list[BossSpot]:
+        """The boss drawn on a node, if it has a boss room. None on a pill, or on a dark room not yet seen lit."""
+        if node.tile not in BOSS_ROOMS or node in self.compact or self.is_hidden_dark(node.tile):
+            return []
+        room = BOSS_ROOMS[node.tile]
+        # In a split supertile it goes on the part it is in
+        if self.rooms.part_count(node.tile) > 1 and self.player_node(node.tile, room.x, room.y) != node:
+            return []
+        return [BossSpot(node.tile, self.bosses.get(node.tile), (room.x / 512 - 0.5) * THUMB, (room.y / 512 - 0.5) * THUMB)]
+
+    def set_boss(self, tile: Tile, boss: str | None) -> None:
+        """Say which boss a boss room has. None for not known: it counts as beaten."""
+        if boss is None:
+            self.bosses.pop(tile, None)
+        else:
+            self.bosses[tile] = boss
+        self._find_reach()
 
     def check_spots(self, node: Node) -> list[CheckSpot]:
         """The checks drawn on a node. None on a pill, or on a dark room not yet seen lit."""

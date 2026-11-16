@@ -57,6 +57,7 @@ Start SNI and launch the tracker. The tracker will automatically connect to SNI 
 - Left click door, then another door - Link them (Esc cancels)
 - Right click door - Add annotation or lobby. Right click the annotation to remove it
 - Right click link - Remove link
+- Click the boss in a boss room - Pick which boss the seed put there. It shows a skull with a `?` until you do. Right click to undo
 - Middle click a joined doorway - Split the two rooms apart. Middle click a link - Join the rooms on it (takes priority over automatic joining)
 - Double click the background (or right click -> Add supertile here) - Add a supertile from the EG map
 - Double click an unlinked door - Add a supertile next to that door

@@ -5,9 +5,10 @@ CollectionState in BaseClasses.py defines the tests they use, like can_lift_rock
 written and not run. The randomizer only has rules once it has generated a whole seed, and by then one that holds
 in every seed looks the same as one that depends on that seed's settings.
 
-Only what holds in every seed is kept. A rule set under an "if" depends on the seed, and so do key doors, bosses
-and dark rooms; and the tracker cannot read events like "Open Floodgate". All of those count as met, so a rule
-here never asks for more than the randomizer does.
+Only what holds in every seed is kept. A rule set under an "if" depends on the seed, and so do key doors and dark
+rooms; and the tracker cannot read events like "Open Floodgate". All of those count as met, so a rule here never
+asks for more than the randomizer does. Which boss is in a boss room depends on the seed too: what beating each
+takes is read from Bosses.py, for the room's boss once the player has picked it (gui/Doors/bosses.py).
 """
 
 import ast
@@ -20,6 +21,7 @@ from gui.Doors.randomizer import dungeon_regions, syntax
 # After gui.Doors.randomizer, which makes the randomizer importable
 from ALttPDoorRandomizer import Doors, Rules  # noqa: E402
 from ALttPDoorRandomizer.BaseClasses import CollectionState  # noqa: E402
+from ALttPDoorRandomizer.Bosses import boss_table  # noqa: E402
 from ALttPDoorRandomizer.Regions import location_events  # noqa: E402  location -> the event it gives
 
 # The randomizer's functions whose rules do not depend on the seed's settings, in the order it has them: a later
@@ -113,9 +115,25 @@ class Reader:
             asked = node.args[1]
             region = text(asked.args[0]) if isinstance(asked, ast.Call) and called(asked) == "get_region" else None
             return ("down", region, COLOURS[str(text(node.args[0]))]) if region in self.regions else True
-        on_self = isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "self"
-        if on_self and name in self.tests and len(node.args) == 1:
+        # A test asked of the state: self inside CollectionState, state in a boss's rule
+        on_state = isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id in ("self", "state")
+        if on_state and name in self.tests and len(node.args) == 1:
             return self.test(name)
+        return True
+
+    def function(self, statements: list[ast.stmt]) -> Rule:
+        """A rule written as a function's body: a returned expression, after any number of "if not this: return
+        False" and "if this: return True"."""
+        first, rest = statements[0], statements[1:]
+        if isinstance(first, ast.Return) and first.value is not None:
+            return self.rule(first.value)
+        if isinstance(first, ast.If) and not first.orelse and len(first.body) == 1 and isinstance(first.body[0], ast.Return):
+            gives = first.body[0].value
+            negated = isinstance(first.test, ast.UnaryOp) and isinstance(first.test.op, ast.Not)
+            if isinstance(gives, ast.Constant) and gives.value is False and isinstance(first.test, ast.UnaryOp) and negated:
+                return combine("all", [self.rule(first.test.operand), self.function(rest)])
+            if isinstance(gives, ast.Constant) and gives.value is True and not negated:
+                return combine("any", [self.rule(first.test), self.function(rest)])
         return True
 
 
@@ -206,7 +224,19 @@ def read_crystals() -> dict[str, int]:
     return found
 
 
+def read_bosses() -> dict[str, tuple[Rule, Rule]]:
+    """Boss -> what beating it takes, and what it takes on an icy floor."""
+    reader = Reader(set())
+
+    def rule(function) -> Rule:
+        body = syntax(function).body
+        return reader.function([s for s in body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))])
+
+    return {boss: (rule(usual), rule(on_ice)) for boss, (_name, usual, on_ice) in boss_table.items()}
+
+
 # What leaving a region through a door or passage takes; what collecting a check takes, once in its region; the
 # region each check is in; and event -> (the region it is done in, what doing it takes)
 passage_rules, check_rules, check_regions, events = read()
 crystals = read_crystals()
+boss_rules = read_bosses()
