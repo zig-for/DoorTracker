@@ -4,6 +4,7 @@ import copy
 
 from data.doors_data import dark_tiles, default_one_way_connections, dungeon_lobbies
 from gui.Doors import seed_map
+from gui.Doors.bosses import BOSS_ROOMS
 from gui.Doors.randomizer import doors_and_portals
 from gui.Doors.rooms import DOORS, INTERIOR_DOORS, SPLIT, SUPERTILES, supertile
 from support import VANILLA, a_rom, grow, joined_doors, new_model, next_link, open_doors, positions
@@ -259,7 +260,7 @@ def test_no_room_is_laid_out_on_an_entrances_marker():
     # Skull Woods as in the original game: the room south of the first lobby would join on under its entrance
     seed = seed_map.decode(a_rom(VANILLA, default_one_way_connections))
     model = new_model("Skull_Woods")
-    model.show_seed(seed.links(decoupled=False), {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]})
+    model.show_seed(seed.links(decoupled=False), {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]}, seed.bosses)
     assert any(model.marker_boxes(node) for node in model.nodes())
     for node in model.nodes():
         x, y = model.pos[node]
@@ -276,9 +277,14 @@ def test_a_seeds_links_and_entrances_are_read_back_from_its_rom():
     pairs = [(a, c), (b, d), *VANILLA[2:]]
     # Three entrances moved: to a room's right door, to a left one, and to a middle one
     moved = {"Eastern": "Eastern Hint Tile Blocked Path SE", "Skull 1": "Skull Star Pits SW", "Skull 3": "Eastern Darkness S"}
-    seed = seed_map.decode(a_rom(pairs, default_one_way_connections, moved))
+    # Three boss rooms given other bosses: Eastern's, the Ice Palace's and Misery Mire's
+    seed = seed_map.decode(a_rom(pairs, default_one_way_connections, moved, bosses={0xC8: "Mothula", 0xDE: "Vitreous", 0x90: "Kholdstare"}))
     assert seed.leads == {**dict(pairs), **{y: x for x, y in pairs}, **dict(default_one_way_connections)}
     assert seed.entrances == {portal.name: portal.door.name for portal in doors_and_portals()[1]} | moved
+    assert [seed.bosses[tile] for tile in ((8, 12), (14, 13), (0, 9))] == ["Mothula", "Vitreous", "Kholdstare"]
+    # The rest have their own, as Ganon's Tower's three do
+    assert [seed.bosses[tile] for tile in ((12, 1), (12, 6), (13, 4))] == ["Armos Knights", "Lanmolas", "Moldorm"]
+    assert set(seed.bosses) == set(BOSS_ROOMS)
     # Each pair once, and the ways into rooms with no way back
     assert len(seed.links(decoupled=False)) == len(pairs) + len(default_one_way_connections)
 
@@ -290,8 +296,9 @@ def test_the_cheat_gives_each_tab_its_own_dungeon_as_the_seed_made_it():
         model = new_model(tab, vanilla_drops=False)
         model.add_tile(DOORS["Hera Lobby S"].tile, has_been_lit=True)  # what was on the map goes
         mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]}
-        model.show_seed(seed.links(decoupled=False), mine)
-        # With the doors as in the original game, that is the dungeon's own rooms, all lit
+        model.show_seed(seed.links(decoupled=False), mine, seed.bosses)
+        # With the doors as in the original game, that is the dungeon's own rooms, all lit, each boss room with its boss
         assert set(model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == tab}, tab
+        assert set(model.bosses) == set(model.tiles) & set(BOSS_ROOMS), tab
         assert not any(model.is_hidden_dark(tile) for tile in model.tiles)
         assert set(mine.values()) <= {lobby.door for lobby in model.lobby_doors}

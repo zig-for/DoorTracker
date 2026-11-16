@@ -8,10 +8,9 @@ import grpc
 import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
-from gui.Doors import seed_map
 from gui.Doors.logic import ITEMS_AT
 from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
-from support import VANILLA, a_rom
+from support import VANILLA, a_rom, rom_reads
 
 DUNGEON, TAB = "0c", "Palace_of_Darkness"
 DARK_ROOM = (10, 11)
@@ -70,7 +69,7 @@ def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None
 
     collected: (table, room, mask) flags the game has set, for the tracker's reads of what has been collected.
     equipment: {address in save data: byte} for the items held.
-    rom: what the ROM holds of the seed's map, by name in seed_map.READS.
+    rom: what the ROM holds of the seed's map, as support.a_rom gives it.
     """
     model = window.pages[TAB].model
     seen = {}
@@ -107,10 +106,11 @@ def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None
         async def MultiRead(self, request):
             if request.requests[0].requestAddress == sni_tracker.check_addresses["room"][0]:
                 return Reply(responses=[Reply(data=bytes(tables[name])) for name in sni_tracker.check_addresses])
-            for name, (address, size) in seed_map.READS.items():
-                if rom is not None and address <= request.requests[0].requestAddress < address + size:
-                    pieces = [(piece.requestAddress - address, piece.size) for piece in request.requests]
-                    return Reply(responses=[Reply(data=rom[name][at : at + length]) for at, length in pieces])
+            if rom is not None:
+                for name, (address, size) in rom_reads(rom).items():
+                    if address <= request.requests[0].requestAddress < address + size:
+                        pieces = [(piece.requestAddress - address, piece.size) for piece in request.requests]
+                        return Reply(responses=[Reply(data=rom[name][at : at + length]) for at, length in pieces])
             app.processEvents()
             if self.served == len(steps):
                 seen["end"] = state()

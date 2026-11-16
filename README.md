@@ -82,7 +82,7 @@ The toolbar is above the tabs: what it sets is the same in every tab. `Fit` and 
   - Drops into a dungeon and the sanctuary mirror route show a question mark, and are not counted as a way in, until you use one or click it
   - The panel in the bottom right shows your items and keys
 - View -> Show FPS - At the right of the toolbar: how many times the tab in view was drawn in the last second, and how long the last drawing took. The map is only drawn when something changes, so it reads 0 when nothing is happening
-- Experimental -> Cheat: Reveal All Tiles - With auto-tracking connected, read the seed's own map from the game: every tab gets its dungeon's rooms, links and entrances, in place of what was there
+- Experimental -> Cheat: Reveal All Tiles - With auto-tracking connected, read the seed's own map from the game: every tab gets its dungeon's rooms, links, entrances and bosses, in place of what was there
 - Experimental -> Hide Single Route Tiles - Fully linked pass-through rooms shrink to a small pill instead of a full card
 
 ## Command Line Arguments

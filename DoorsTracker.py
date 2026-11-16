@@ -405,7 +405,7 @@ class MainWindow(QMainWindow):
         links = seed.links(self.settings["decoupled_doors"])
         for page in self.pages.values():
             mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[page.tab_world]}
-            page.show_seed(links, mine)
+            page.show_seed(links, mine, seed.bosses)
 
     def _option_toggled(self, checked: bool) -> None:
         """A menu option or a toolbar box, named after its setting, was toggled."""

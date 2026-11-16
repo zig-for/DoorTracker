@@ -154,7 +154,7 @@ class TrackerUI(Protocol):
 
     def checks_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in check_addresses
 
-    def seed_map_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in seed_map.READS
+    def seed_map_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in seed_map.READS and next_reads
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -316,7 +316,11 @@ async def _sni_session(
 
             if ui.seed_map_wanted:
                 # Still wanted if the read fails, so it is read again once the connection is back
-                memory = await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, seed_map.READS)
+                memory, reads = {}, seed_map.READS
+                while reads:
+                    # Where some of it is kept is itself read from the ROM
+                    memory |= await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, reads)
+                    reads = seed_map.next_reads(memory)
                 ui.seed_map_wanted = False
                 ui.seed_map_read(memory)
 

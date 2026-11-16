@@ -502,11 +502,12 @@ class GraphModel:
         self.update()
         return True
 
-    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str]) -> None:
+    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str], bosses: dict[Tile, str]) -> None:
         """A cheat: this tab's dungeon as the seed made it, in place of the map that was there.
 
         links: the doors the seed joined, in every dungeon, as (door, the door it leads to).
         entrances: this dungeon's own, by name -> the door each comes in by.
+        bosses: every boss room's boss. The ones in this dungeon are picked for their rooms.
         What can be walked to from the entrances is this dungeon: the links there are kept, and every room is lit.
         """
         used = self.used_entrances
@@ -527,6 +528,7 @@ class GraphModel:
                 self._ensure_tile(room.tile)
         for state in self.tiles.values():
             state.has_been_lit = True
+        self.bosses = {tile: boss for tile, boss in bosses.items() if tile in self.tiles}
         self.relayout()
         self._find_reach()
 
