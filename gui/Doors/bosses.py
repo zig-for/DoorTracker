@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gui.Doors.checks import checks
+from gui.Doors.logic import Rule
 from gui.Doors.rooms import DEFAULT_DOORS, Tile
 from gui.Doors.rules import boss_rules, check_regions
 
@@ -44,3 +45,13 @@ def _rooms() -> dict[Tile, BossRoom]:
 
 
 BOSS_ROOMS = _rooms()
+
+
+def beating(tile: Tile, boss: str, dungeon: str) -> Rule:
+    """What going past a boss room's boss takes, in a dungeon by the tracker's name for it."""
+    room = BOSS_ROOMS[tile]
+    rule = boss_rules[boss][room.on_ice]
+    # In Thieves' Town, Blind is only there once the maiden is unmasked: set_defeat_dungeon_boss_rule in Rules.py
+    if boss == "Blind" and dungeon == "Thieves_Town" and "Thieves Town Boss" in room.ways:
+        return ("all", rule, "Maiden Unmasked")
+    return rule

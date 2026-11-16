@@ -63,7 +63,7 @@ def _boss_sprites() -> dict[int, str]:
 
 
 BOSS_SPRITES = _boss_sprites()
-BOSS_ROOMS = sorted(room[0] for room in (*boss_rooms.values(), *gt_boss_room.values()))
+BOSS_ROOM_NUMBERS = sorted(room[0] for room in (*boss_rooms.values(), *gt_boss_room.values()))
 
 
 def next_reads(memory: Mapping[str, bytes]) -> dict[str, tuple[int, int]]:
@@ -75,12 +75,12 @@ def next_reads(memory: Mapping[str, bytes]) -> dict[str, tuple[int, int]]:
     """
     if "sprite_table" not in memory:
         table = SPRITE_TABLE_BANK | int.from_bytes(memory["sprite_table_at"], "little")
-        first, last = BOSS_ROOMS[0], BOSS_ROOMS[-1]
+        first, last = BOSS_ROOM_NUMBERS[0], BOSS_ROOM_NUMBERS[-1]
         return {"sprite_table": (snes_to_pc(table + first * 2), (last - first + 1) * 2)}
-    if f"sprites {BOSS_ROOMS[0]:#x}" not in memory:
+    if f"sprites {BOSS_ROOM_NUMBERS[0]:#x}" not in memory:
         reads = {}
-        for room in BOSS_ROOMS:
-            at = (room - BOSS_ROOMS[0]) * 2
+        for room in BOSS_ROOM_NUMBERS:
+            at = (room - BOSS_ROOM_NUMBERS[0]) * 2
             reads[f"sprites {room:#x}"] = (snes_to_pc(SPRITE_BANK | int.from_bytes(memory["sprite_table"][at : at + 2], "little")), 4)
         return reads
     return {}
@@ -152,7 +152,7 @@ def decode(memory: Mapping[str, bytes]) -> SeedMap:
         entrances[portal.name] = door.name if door is not None and door.portalAble else portal.door.name
 
     bosses = {}
-    for room in BOSS_ROOMS:
+    for room in BOSS_ROOM_NUMBERS:
         boss = BOSS_SPRITES.get(memory[f"sprites {room:#x}"][3])
         if boss is not None:
             bosses[(room % 16, room // 16)] = boss

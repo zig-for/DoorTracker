@@ -128,12 +128,11 @@ class Reader:
         if isinstance(first, ast.Return) and first.value is not None:
             return self.rule(first.value)
         if isinstance(first, ast.If) and not first.orelse and len(first.body) == 1 and isinstance(first.body[0], ast.Return):
-            gives = first.body[0].value
-            negated = isinstance(first.test, ast.UnaryOp) and isinstance(first.test.op, ast.Not)
-            if isinstance(gives, ast.Constant) and gives.value is False and isinstance(first.test, ast.UnaryOp) and negated:
-                return combine("all", [self.rule(first.test.operand), self.function(rest)])
-            if isinstance(gives, ast.Constant) and gives.value is True and not negated:
-                return combine("any", [self.rule(first.test), self.function(rest)])
+            gives, test = first.body[0].value, first.test
+            if isinstance(gives, ast.Constant) and gives.value is False and isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+                return combine("all", [self.rule(test.operand), self.function(rest)])
+            if isinstance(gives, ast.Constant) and gives.value is True and not isinstance(test, ast.UnaryOp):
+                return combine("any", [self.rule(test), self.function(rest)])
         return True
 
 

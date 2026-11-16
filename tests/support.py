@@ -12,7 +12,6 @@ from gui.Doors.rooms import DOORS, INTERIOR_DOORS, SPLIT, SUPERTILES, supertile
 # After gui.Doors, which makes the randomizer importable
 from ALttPDoorRandomizer.source.enemizer import Bossmizer  # noqa: E402
 from ALttPDoorRandomizer.source.rom.DataTables import get_uw_enemy_table  # noqa: E402
-from ALttPDoorRandomizer.Utils import snes_to_pc  # noqa: E402
 
 OPPOSITE = {"No": "So", "So": "No", "Ea": "We", "We": "Ea"}
 # The pairs of doors joined both ways in the original game
@@ -46,10 +45,9 @@ def a_rom(pairs, one_way=(), moved=None, bosses=None):
     for room, boss in (bosses or {}).items():
         del sprites.room_map[room][: Bossmizer.boss_room_remove_data[room]]
         Bossmizer.boss_addition_table[boss][0](sprites.room_map[room], room)
-    # The table of rooms is at 09:D62E in the game. Here the overworld's sprites end past that, as a seed's can, and
-    # the randomizer moves the table to where they end: as in DataTables.py's pointer_addresses
+    # The table of rooms is at 09:D62E in the game. Here the overworld's sprites are given as ending past that,
+    # which has the randomizer's writer move the table and say where: as in DataTables.py's pointer_addresses
     table, ow_end = 0x09D62E, 0x09D72E
-    rom.write_bytes(snes_to_pc(seed_map.SPRITE_TABLE_AT), list((table & 0xFFFF).to_bytes(2, "little")))
     sprites.write_sprite_data_to_rom(rom, {"ow_sprites": [ow_end, 0], "uw_sprites": [0x09D92E, None, table, seed_map.SPRITE_TABLE_AT]})
 
     for a, b in [*pairs, *((b, a) for a, b in pairs), *one_way]:

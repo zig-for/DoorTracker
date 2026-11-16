@@ -120,7 +120,20 @@ def autosave_name(seed_hash: str | None) -> str:
     return f"autosave-{seed_hash}.yaml" if seed_hash else "autosave.yaml"
 
 
-class IconPicker(QDialog):
+class Picker(QDialog):
+    """A dialog of buttons, each named for what it picks: choice is the name of the one clicked."""
+
+    def __init__(self, parent, title):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.choice = None
+
+    def _pick(self):
+        self.choice = self.sender().objectName()
+        self.accept()
+
+
+class IconPicker(Picker):
     """The icons to put on a door: rows of marks, items and equipment, then the ways in. Those are this dungeon's
     entrances, in the same four places for every dungeon, and a place the player can get to."""
 
@@ -136,9 +149,7 @@ class IconPicker(QDialog):
 
     def __init__(self, parent, assets, world, taken):
         """taken: the entrances the map already has, which are greyed out."""
-        super().__init__(parent)
-        self.setWindowTitle("Annotate door")
-        self.choice = None
+        super().__init__(parent, "Annotate door")
         grid = QGridLayout(self)
         grid.setSpacing(2)
         for row, names in enumerate(self.ROWS):
@@ -169,20 +180,14 @@ class IconPicker(QDialog):
         button.clicked.connect(self._pick)
         return button
 
-    def _pick(self):
-        self.choice = self.sender().objectName()
-        self.accept()
 
-
-class BossPicker(QDialog):
+class BossPicker(Picker):
     """The bosses a boss room can have, to pick the one it has."""
 
     ACROSS = 5
 
     def __init__(self, parent, assets):
-        super().__init__(parent)
-        self.setWindowTitle("Boss")
-        self.choice = None
+        super().__init__(parent, "Boss")
         grid = QGridLayout(self)
         grid.setSpacing(2)
         for place, boss in enumerate(BOSSES):
@@ -193,10 +198,6 @@ class BossPicker(QDialog):
             button.setObjectName(boss)
             button.clicked.connect(self._pick)
             grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
-
-    def _pick(self):
-        self.choice = self.sender().objectName()
-        self.accept()
 
 
 class EgPicker(QDialog):

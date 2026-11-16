@@ -27,11 +27,11 @@ from data.doors_data import (
 from data.doors_sprite_data import REACHABLE
 from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
-from gui.Doors.bosses import BOSS_ROOMS
-from gui.Doors.checks import checks
+from gui.Doors.bosses import BOSS_ROOMS, beating
+from gui.Doors.checks import BIG_KEY_DROPS, checks
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, holds
-from gui.Doors.rules import boss_rules, check_regions, check_rules, crystals, events, passage_rules
+from gui.Doors.rules import check_regions, check_rules, crystals, events, passage_rules
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
@@ -131,7 +131,7 @@ class CheckSpot:
     name: str  # in gui/Doors/checks.py
     x: float  # relative to the node's centre, world units
     y: float
-    kind: str  # "pot" for a key in a pot, "enemy" for one an enemy drops; see the flags in gui/Doors/checks.py
+    kind: str  # "pot" for a key in a pot, "enemy" for one an enemy drops, "big key" for a big key one drops
 
 
 @dataclass(frozen=True)
@@ -913,8 +913,8 @@ class GraphModel:
         reached: dict[str, int] = {}
         held = items or frozenset()
         queue: deque[str] = deque()
-        # Way out of a boss room -> what beating the boss picked for the room takes
-        beaten = {way: boss_rules[boss][BOSS_ROOMS[tile].on_ice] for tile, boss in self.bosses.items() if tile in BOSS_ROOMS for way in BOSS_ROOMS[tile].ways}
+        # Way out of a boss room -> what going past the boss picked for the room takes
+        beaten = {way: beating(tile, boss, self.dungeon_name) for tile, boss in self.bosses.items() if tile in BOSS_ROOMS for way in BOSS_ROOMS[tile].ways}
 
         def arrive(name: str, down: int) -> None:
             for region in regions_at(name):
@@ -1602,9 +1602,6 @@ class GraphModel:
         if node.tile not in BOSS_ROOMS or node in self.compact or self.is_hidden_dark(node.tile):
             return []
         room = BOSS_ROOMS[node.tile]
-        # In a split supertile it goes on the part it is in
-        if self.rooms.part_count(node.tile) > 1 and self.player_node(node.tile, room.x, room.y) != node:
-            return []
         return [BossSpot(node.tile, self.bosses.get(node.tile), (room.x / 512 - 0.5) * THUMB, (room.y / 512 - 0.5) * THUMB)]
 
     def set_boss(self, tile: Tile, boss: str | None) -> None:
@@ -1625,7 +1622,8 @@ class GraphModel:
             check = checks[name]
             # A split supertile's checks each go on the part they are in
             if not split or self._check_node(name) == node:
-                spots.append(CheckSpot(name, (check["x"] / 512 - 0.5) * THUMB, (check["y"] / 512 - 0.5) * THUMB, check["flags"][0][0]))
+                kind = "big key" if name in BIG_KEY_DROPS else check["flags"][0][0]
+                spots.append(CheckSpot(name, (check["x"] / 512 - 0.5) * THUMB, (check["y"] / 512 - 0.5) * THUMB, kind))
         return spots
 
     def _check_node(self, name: str) -> Node:

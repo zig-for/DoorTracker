@@ -61,7 +61,7 @@ from gui.Doors.rooms import (
     entrance_only,
     supertile,
 )
-from gui.qt.items_panel import ITEMS, PICTURE_NAMES, ItemsPanel, picture
+from gui.qt.items_panel import BIG_KEY_PICTURE, ITEMS, PICTURE_NAMES, ItemsPanel, picture
 from gui.qt.style import (
     BACKGROUND,
     CHECK_COLLECTED,
@@ -94,6 +94,7 @@ WORLD = 1_000_000  # scene half-extent
 CHECK_SIZE = 9.0  # side of a check's square, world units
 CHECK_EDGE = 1.5  # how much of the square shows round a picture in it
 POT_EDGE = 2.0  # and round a pot
+KEY_PICTURES = {"enemy": "Small Key", "big key": BIG_KEY_PICTURE}  # a dropped key's kind -> the randomizer's picture
 BOSS_SIZE = 12.0  # side of a boss room's boss
 # A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
 # shifts by less than this on every solver step, which would otherwise redraw everything
@@ -526,7 +527,7 @@ class DoorsItem(QGraphicsItem):
             painter.drawRect(QRectF(check.x - half, check.y - half, CHECK_SIZE, CHECK_SIZE))
             # A key in a pot has a pot in its square, and one an enemy drops a key: fainter once collected. The
             # square's colour shows through around them
-            shown = page.assets.pot() if check.kind == "pot" else picture("Small Key") if check.kind == "enemy" else None
+            shown = page.assets.pot() if check.kind == "pot" else picture(KEY_PICTURES[check.kind]) if check.kind in KEY_PICTURES else None
             if shown is not None:
                 # As big as fits inside the square's edge, in the picture's own shape. A pot is on its stand, which
                 # hides the square behind it, so it is given more edge

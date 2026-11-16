@@ -157,6 +157,22 @@ def test_a_boss_rooms_drops_take_beating_the_boss_picked_for_it():
     assert model.check_state(name) is CheckState.OPEN
 
 
+def test_blind_in_thieves_town_is_only_there_once_the_maiden_is_unmasked():
+    name = "Thieves' Town - Boss"
+    tile = checks[name]["tile"]
+    model = new_model("Thieves_Town")
+    model.add_tile(tile, has_been_lit=True)
+    model.add_lobby_door(next(door for door in regions_to_doors["Thieves Boss"] if door in DOORS), "Thieves Town")
+    model.update()
+    # A weapon that beats him, and no way to have unmasked the maiden: that is done elsewhere in the dungeon
+    model.set_items(frozenset({"Hammer"}))
+    model.set_boss(tile, "Blind")
+    assert model.check_state(name) is CheckState.BLOCKED
+    # Any other boss is just fought
+    model.set_boss(tile, "Moldorm")
+    assert model.check_state(name) is CheckState.OPEN
+
+
 def test_a_check_the_map_does_not_lead_to_that_takes_an_item_not_held_is_both():
     name = "Thieves' Town - Big Chest"
     model = new_model("Thieves_Town")

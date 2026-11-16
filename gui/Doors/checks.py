@@ -26,6 +26,8 @@ from ALttPDoorRandomizer.MultiClient import location_table_boss, location_table_
 from ALttPDoorRandomizer.source.rom.DataTables import get_uw_enemy_table  # noqa: E402
 
 KINDS = ("chest", "prize")  # what is placed by data/new_location_data.py
+# The keys dropped that are big keys: the rest are small
+BIG_KEY_DROPS = {name for name, data in PotShuffle.key_drop_data.items() if str(data[3]).startswith("Big Key")}
 
 
 class Check(TypedDict):
