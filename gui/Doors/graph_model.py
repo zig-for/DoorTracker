@@ -219,7 +219,7 @@ class GraphModel:
         self.door_links: list[Link] = []
         self.lobby_doors: list[LobbyDoor] = []
         self.special_doors: dict[str, str] = {}  # door -> icon
-        self.bosses: dict[Tile, str] = {}  # boss room -> the boss the player picked for it
+        self.bosses: dict[Tile, str] = {}  # boss room -> its boss, as the player picked it or as the seed has it
         self.revealed = False  # the map is the seed's own, put here by show_seed
         self.kept_expanded: set[Node] = set()  # see toggle_expanded
         self.sanc_dungeon = False
@@ -504,7 +504,7 @@ class GraphModel:
         return True
 
     def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str], bosses: dict[Tile, str]) -> None:
-        """A cheat: this tab's dungeon as the seed made it, in place of the map that was there.
+        """This tab's dungeon as the seed made it, in place of the map that was there.
 
         links: the doors the seed joined, in every dungeon, as (door, the door it leads to).
         entrances: this dungeon's own, by name -> the door each comes in by.

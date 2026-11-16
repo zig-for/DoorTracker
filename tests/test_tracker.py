@@ -65,12 +65,13 @@ class PlaybackOver(grpc.aio.AioRpcError):
         pass
 
 
-def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None):
+def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None, during_check_read=None):
     """Feed the readings to the real loop. Returns the map's state as it was before each labelled reading, and at the end.
 
     collected: (table, room, mask) flags the game has set, for the tracker's reads of what has been collected.
     equipment: {address in save data: byte} for the items held.
     rom: what the ROM holds of the seed's map, as support.a_rom gives it.
+    during_check_read: called while the tracker waits for its read of what has been collected.
     """
     model = window.pages[TAB].model
     seen = {}
@@ -106,6 +107,8 @@ def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None
 
         async def MultiRead(self, request):
             if request.requests[0].requestAddress == sni_tracker.check_addresses["room"][0]:
+                if during_check_read is not None:
+                    during_check_read()
                 return Reply(responses=[Reply(data=bytes(tables[name])) for name in sni_tracker.check_addresses])
             if rom is not None:
                 for name, (address, size) in rom_reads(rom).items():
@@ -254,6 +257,27 @@ def test_loading_another_seed_mid_dungeon_adds_nothing_from_the_old_game(window,
     seen = play(window, app, monkeypatch, [(f"old {k}", old_game) for k in range(3)] + [(f"new {k}", new_game) for k in range(3)])
     assert window.seed_hash == "bbbbbbbbbb"
     assert (seen["end"]["links"], seen["end"]["entrances"]) == ([], [])
+
+
+def test_a_map_opened_while_the_tracker_waits_for_a_read_gets_nothing_from_that_reading(window, app, monkeypatch):
+    # The user opens another seed's map during the first reading, then says to leave it as it is
+    monkeypatch.setattr(window, "_ask", lambda *args: DoorsTracker.DISCONNECT)
+    tile, door = door_facing("No")
+    in_game = reading(tile, door["x"], door["y"])
+    emptied = DROPS[(12, 8)][0]
+
+    play(
+        window,
+        app,
+        monkeypatch,
+        [("one", in_game), ("two", in_game)],
+        collected=[(emptied.kind, emptied.room, emptied.mask)],
+        equipment={0x34B: 1},
+        during_check_read=lambda: window.load_data({"seed_hash": "eeeeeeeeee"}),
+    )
+    assert window.seed_hash == "eeeeeeeeee"
+    model = window.pages[TAB].model
+    assert tile not in model.tiles and model.player is None and window.collected == set() and model.items is None
 
 
 def supertile_with_doors_facing(*facings):

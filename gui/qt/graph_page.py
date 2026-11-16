@@ -1681,7 +1681,7 @@ class GraphPage(QWidget):
             self.scene.update()
 
     def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str], bosses: dict[Tile, str]) -> None:
-        """A cheat: this tab's dungeon as the seed made it; see GraphModel.show_seed."""
+        """This tab's dungeon as the seed made it; see GraphModel.show_seed."""
         self.model.show_seed(links, entrances, bosses)
         self._select(None)
         self._needs_fit = True

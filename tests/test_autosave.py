@@ -228,6 +228,24 @@ def test_with_autosave_off_a_different_seed_asks_before_the_map_changes_seed(win
     assert links(window) == ([] if new_map else old_map)
 
 
+@pytest.mark.parametrize("change", ["a file is opened", "a new map is started", "the map is kept for another seed"])
+def test_what_was_read_from_a_game_or_asked_of_it_is_not_carried_to_another(window, monkeypatch, change):
+    window.seed_seen("aaaaaaaaaa")
+    window.set_held(frozenset({"Hammer"}), {})
+    # The cheat, asked for and not yet done
+    window.cheat_wanted = window.seed_map_wanted = True
+    monkeypatch.setattr(window, "_ask", lambda *args: DoorsTracker.KEEP_MAP)
+
+    if change == "a file is opened":
+        window.load_data({"seed_hash": "bbbbbbbbbb"})
+    elif change == "a new map is started":
+        window.new_map()
+    else:
+        window.seed_seen("bbbbbbbbbb")
+    assert not window.cheat_wanted and not window.seed_map_wanted
+    assert window.pages[TAB].model.items is None
+
+
 def test_disconnecting_leaves_the_map_and_its_seed_alone(window, monkeypatch):
     window.seed_seen("aaaaaaaaaa")
     grow(window.pages[TAB].model, 2)

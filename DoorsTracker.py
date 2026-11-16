@@ -433,15 +433,9 @@ class MainWindow(QMainWindow):
         if rooms_for or bosses_for:
             self.seed_map_wanted = True
 
-    def seed_map_read(self, seed: seed_map.SeedMap, seed_hash: str) -> None:
+    def seed_map_read(self, seed: seed_map.SeedMap) -> None:
         """The seed's own map, from the auto-tracker, which was asked for it by _reveal. It is used and not kept:
-        the tracker has it for as long as it is reading that game.
-
-        seed_hash: of the game it is for. If the map on screen has become another game's since it was asked for,
-        it is not this map's, and is left.
-        """
-        if seed_hash != self.seed_hash:
-            return
+        the tracker has it for as long as it is reading that game."""
         rooms_for, bosses_for, with_compass = self._to_reveal()
         if rooms_for:
             links = seed.links(self.settings["decoupled_doors"])
@@ -590,7 +584,7 @@ class MainWindow(QMainWindow):
             data["Castle_Tower"] = data.pop("Agahnims_Tower")
         self.seed_hash = data.pop("seed_hash", None)
         self.collected = set(data.pop("collected", None) or [])
-        self._forget_held()
+        self._forget_game()
         self._adopt_seed = False
         # A spoiler lists lobbies apart from the dungeons: file each under the dungeon that owns it
         for lobby, door in (data.pop("lobbies", None) or {}).items():
@@ -754,6 +748,8 @@ class MainWindow(QMainWindow):
                 return False
             if answer == NEW_MAP:
                 self._clear_map()
+            else:
+                self._forget_game()  # the map is kept, for another game
         self.seed_hash = seed_hash
         self.map_changed()
         return True
@@ -789,24 +785,19 @@ class MainWindow(QMainWindow):
         self.collected = set()
         for page in self.pages.values():
             page.init_page()
-        self._forget_held()
+        self._forget_game()
 
-    def _forget_held(self) -> None:
-        """The map on screen is another one now: what the player held was for the one before. A tracker file does
-        not say what is held."""
+    def _forget_game(self) -> None:
+        """The map on screen is another one now, or another game's. What was read from the game before, and what
+        was asked of it, is not for this one. A tracker file does not say what is held."""
+        self.cheat_wanted = self.seed_map_wanted = False
         if self._held is not None:
             self._held = None
             for page in self.pages.values():
                 page.set_items(None, {})
 
-    def checks_read(self, memory: Mapping[str, bytes], seed_hash: str) -> None:
-        """The game's tables of what has been collected and the items held, as the auto-tracker just read them.
-
-        seed_hash: of the game they were read from. If the map has become another game's since the read was
-        asked for, they are not this map's, and are left.
-        """
-        if seed_hash != self.seed_hash:
-            return
+    def checks_read(self, memory: Mapping[str, bytes]) -> None:
+        """The game's tables of what has been collected and the items held, as the auto-tracker just read them."""
 
         def word(table: str, room: int) -> int:
             return int.from_bytes(memory[table][room * 2 : room * 2 + 2], "little")
