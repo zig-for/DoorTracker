@@ -56,15 +56,15 @@ BITS = {
     "Magic Powder": (0x38C, 0x10),
     "Shovel": (0x38C, 0x04),
     "Ocarina": (0x38C, 0x03),  # working or not
-    **{key: _FLAGS[key] for key in dungeon_bigs.values()},
+    # The big keys, and with them the dungeons' maps and compasses
+    **{item: where for item, where in _FLAGS.items() if item.startswith(("Big Key (", "Map (", "Compass ("))},
 }
 # The tracker's name for a dungeon -> its big key, and -> where its small keys are counted
 BIG_KEYS = {tab: dungeon_bigs[dungeon_name(tab)] for tab in DUNGEONS}
 SMALL_KEYS_AT = {tab: _COUNTS[dungeon_keys[dungeon_name(tab)]][0] for tab in DUNGEONS}
-# The tracker's name for a dungeon -> where its map is kept, and its compass: (address, bits). The randomizer names
-# them as it names the big keys
-MAPS_AT = {tab: _FLAGS[key.replace("Big Key", "Map")] for tab, key in BIG_KEYS.items()}
-COMPASSES_AT = {tab: _FLAGS[key.replace("Big Key", "Compass")] for tab, key in BIG_KEYS.items()}
+# The tracker's name for a dungeon -> its map, and -> its compass: the randomizer names them as it names the big keys
+MAPS = {tab: key.replace("Big Key", "Map") for tab, key in BIG_KEYS.items()}
+COMPASSES = {tab: key.replace("Big Key", "Compass") for tab, key in BIG_KEYS.items()}
 # The game's number for a dungeon -> the tracker's name for it. The sewers have a number of their own
 DUNGEON_NUMBERS = {0x00: "Hyrule_Castle"} | {compass_data[dungeon_name(tab)][4]: tab for tab in DUNGEONS}
 KEYS_HERE_AT = 0x36F  # the small keys for the dungeon the player is in; 0xFF outside
@@ -100,11 +100,6 @@ def items_held(save: bytes) -> frozenset[str]:
     if any(at(address) for address in BOTTLES_AT):
         held.add(BOTTLE)
     return with_hearts(frozenset(held), at(HEALTH_AT) // 8)
-
-
-def dungeons_with(save: bytes, kept_at: Mapping[str, tuple[int, int]]) -> frozenset[str]:
-    """The dungeons whose map is held, or whose compass: kept_at is MAPS_AT or COMPASSES_AT."""
-    return frozenset(tab for tab, (address, bits) in kept_at.items() if save[address - ITEMS_AT] & bits)
 
 
 def small_keys(save: bytes, dungeon: int) -> dict[str, int]:

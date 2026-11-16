@@ -9,7 +9,7 @@ import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
 from gui.Doors.checks import DROPS
-from gui.Doors.logic import COMPASSES_AT, ITEMS_AT, MAPS_AT
+from gui.Doors.logic import BITS, COMPASSES, ITEMS_AT, MAPS
 from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
 from support import VANILLA, a_rom, rom_reads
 
@@ -194,9 +194,12 @@ def test_checks_the_game_has_flagged_are_collected(window, app, monkeypatch):
         "Eastern Palace - Dark Eyegore Key Drop": ("enemy", 0x99, 0x8000 >> 3),
         # or, as a fallback, by the room's "key taken" bit
         "Hyrule Castle - Key Rat Key Drop": ("room", 0x21, 0x400),
+        # A pot emptied and an enemy's drop taken are collected too, under the names the randomizer gives them
+        "Eastern Dark Pots Pot #6": ("pot", 0xBA, 0x8000 >> 5),
+        "Eastern Darkness Enemy #3": ("enemy", 0x99, 0x8000 >> 2),
     }
-    # Flags that belong to no check, and a chest's neighbour bit, mark nothing
-    noise = [("room", 0xA8, 0x8000), ("pot", 0xBA, 0x8000 >> 5), ("enemy", 0x99, 0x8000 >> 2)]
+    # A chest's neighbour bit belongs to no check, and marks nothing
+    noise = [("room", 0xA8, 0x8000)]
 
     play(window, app, monkeypatch, [("one", in_game), ("two", in_game)], collected=list(flagged.values()) + noise)
     assert window.collected == set(flagged)
@@ -308,14 +311,14 @@ def test_a_rooms_pots_are_counted_down_as_they_are_emptied(window, app, monkeypa
     room = (12, 8)
     pots = [drop for drop in DROPS[room] if drop.kind == "pot"]
     window.set_option("pottery", True)
-    # Not counted until a game has been read
-    assert window.drops_left(room) == []
+    assert window.drops_left(room) == pots
     play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], collected=[("pot", pots[0].room, pots[0].mask)])
     # The room's enemies are not counted: that takes the other box
     assert window.drops_left(room) == pots[1:]
-    # What was read is that game's. A map of another seed, as from a tracker file opened, has none of it
-    window.seed_hash = "another seed"
-    assert window.drops_left(room) == []
+    # A pot emptied is collected like any check, so it is kept with the map and gone with it
+    assert pots[0].name in window.tracker_data()["collected"]
+    window._clear_map()
+    assert window.drops_left(room) == pots
 
 
 def test_a_compass_alone_puts_the_seeds_boss_in_a_boss_room_already_on_the_map(window, app, monkeypatch):
@@ -327,7 +330,7 @@ def test_a_compass_alone_puts_the_seeds_boss_in_a_boss_room_already_on_the_map(w
     eastern.add_tile(boss_room, has_been_lit=True)
     eastern.set_boss(boss_room, "Mothula")  # the player's guess, and wrong
     mapped = set(eastern.tiles)
-    compasses_at, compass = COMPASSES_AT["Eastern_Palace"]
+    compasses_at, compass = BITS[COMPASSES["Eastern_Palace"]]
     play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], equipment={compasses_at: compass}, rom=a_rom(VANILLA, default_one_way_connections))
 
     assert eastern.bosses == {boss_room: "Armos Knights"}
@@ -344,7 +347,8 @@ def test_a_dungeons_map_reveals_its_rooms_and_its_compass_its_boss(window, app, 
     tile, door = door_facing("No")
     here = (tile, door["x"], door["y"])
     # The player holds Eastern Palace's map and compass, and Desert Palace's map alone
-    (maps_at, eastern_map), (also_maps_at, desert_map), (compasses_at, eastern_compass) = MAPS_AT["Eastern_Palace"], MAPS_AT["Desert_Palace"], COMPASSES_AT["Eastern_Palace"]
+    (maps_at, eastern_map), (also_maps_at, desert_map) = BITS[MAPS["Eastern_Palace"]], BITS[MAPS["Desert_Palace"]]
+    compasses_at, eastern_compass = BITS[COMPASSES["Eastern_Palace"]]
     assert maps_at == also_maps_at
     held = {maps_at: eastern_map | desert_map, compasses_at: eastern_compass}
     play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], equipment=held, rom=a_rom(VANILLA, default_one_way_connections))

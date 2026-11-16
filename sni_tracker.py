@@ -155,7 +155,7 @@ class TrackerUI(Protocol):
     # What was read, and the seed of the game it was read from: the window's map may be another's by then
     def checks_read(self, memory: Mapping[str, bytes], seed_hash: str) -> None: ...  # by name in check_addresses
 
-    def seed_map_read(self, memory: Mapping[str, bytes], seed_hash: str) -> None: ...  # by name in seed_map.READS and next_reads
+    def seed_map_read(self, seed: seed_map.SeedMap, seed_hash: str) -> None: ...
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -189,6 +189,7 @@ class Game:
 
     stay: Stay
     seed_hash: str | None = None  # None until the game is first read
+    seed: seed_map.SeedMap | None = None  # the seed's own map, read from the ROM the first time the window asks
     # These outlast leaving a dungeon
     was_transitioning: bool = False
     was_falling: bool = False
@@ -316,14 +317,16 @@ async def _sni_session(
             readings_to_check_read -= 1
 
             if ui.seed_map_wanted:
-                # Still wanted if the read fails, so it is read again once the connection is back
-                memory, reads = {}, seed_map.READS
-                while reads:
-                    # Where some of it is kept is itself read from the ROM
-                    memory |= await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, reads)
-                    reads = seed_map.next_reads(memory)
+                if game.seed is None:
+                    # Still wanted if the read fails, so it is read again once the connection is back
+                    memory, reads = {}, seed_map.READS
+                    while reads:
+                        # Where some of it is kept is itself read from the ROM
+                        memory |= await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, reads)
+                        reads = seed_map.next_reads(memory)
+                    game.seed = seed_map.decode(memory)
                 ui.seed_map_wanted = False
-                ui.seed_map_read(memory, data["seed_hash"])
+                ui.seed_map_read(game.seed, data["seed_hash"])
 
             # if args.darkpos:
             #     is_dark = False

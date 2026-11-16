@@ -4,13 +4,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
 from DoorsTracker import IconPicker
-from gui.Doors.logic import BIG_KEYS, ITEMS_AT, ITEMS_LENGTH, READABLE, hearts_held, small_keys
+from gui.Doors.logic import BIG_KEYS, COMPASSES, ITEMS_AT, ITEMS_LENGTH, MAPS, READABLE, hearts_held, small_keys
 from gui.qt.items_panel import BIG_KEY_PICTURE, ITEMS, PICTURE_NAMES, PICTURES, SHORT_NAMES, SLOTS, clicked, picture
 
 
 def test_every_item_read_has_a_place_and_a_picture():
     placed = [item for slot in SLOTS for item in slot.items]
-    assert sorted(placed) == sorted(READABLE - set(BIG_KEYS.values()))
+    # A dungeon's big key is in its column of keys; its map and compass are read and not shown
+    assert sorted(placed) == sorted(READABLE - {*BIG_KEYS.values(), *MAPS.values(), *COMPASSES.values()})
     assert list(SHORT_NAMES) == list(BIG_KEYS)
     pictures = [PICTURE_NAMES.get(item, item) for item in placed] + [slot.start for slot in SLOTS if slot.start] + [BIG_KEY_PICTURE]
     for name in pictures:

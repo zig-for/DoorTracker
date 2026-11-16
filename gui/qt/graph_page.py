@@ -1474,7 +1474,7 @@ class GraphPage(QWidget):
             elif hit.count is not None:
                 # What the count is counting, by name
                 (left,) = [left for kind, _box, left in self._doors[node].counts() if kind == hit.count]
-                named = Counter(drop.name for drop in left)
+                named = Counter(drop.what for drop in left)
                 text = tip = ", ".join(name if count == 1 else f"{count} {name}" for name, count in named.items())
             elif model.is_hidden_dark(node.tile):
                 text = "Dark room"

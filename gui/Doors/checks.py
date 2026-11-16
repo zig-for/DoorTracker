@@ -71,34 +71,36 @@ def key_drops() -> dict[str, Check]:
 
 
 class Drop(NamedTuple):
-    """A pot, or an enemy, that a seed makes a check of when every one is: it has no name here, only its bit and
-    its place."""
+    """A pot, or an enemy, that a seed makes a check of when every one is. It is collected like a check, by its
+    name, but is counted on its room and not drawn."""
 
+    name: str  # as the randomizer's client names the check
     kind: str  # "pot" or "enemy": the table its bit is in, as in a check's flags
     room: int
     mask: int
     x: int  # in the supertile, 0..512
     y: int
-    name: str  # what it is, as the randomizer names it: an enemy's kind, or "Pot" or "Large Block"
+    what: str  # what it is, as the randomizer names it: an enemy's kind, or "Pot" or "Large Block"
 
 
 def drops() -> dict[tuple[int, int], list[Drop]]:
     """The pots and the enemies in a dungeon that are checks in a seed with Pottery set to Dungeon Pots, or Enemy
-    Drops to Underworld Enemies: by supertile. Not the ones with a key, which are checks with names. Each has its
-    bit as the randomizer's client works it out, in init_lookups."""
+    Drops to Underworld Enemies: by supertile. Not the ones with a key, which are checks of their own. Each has
+    its name and its bit as the randomizer's client works them out, in init_lookups."""
     found: dict[tuple[int, int], list[Drop]] = {}
 
-    def add(kind: str, room: int, place: int, x: int, y: int, name: str) -> None:
+    def add(name: str, kind: str, room: int, place: int, x: int, y: int, what: str) -> None:
         tile = (room % 16, room // 16)
         if tile in SUPERTILES:
-            found.setdefault(tile, []).append(Drop(kind, room, 0x8000 >> place, x, y, name))
+            found.setdefault(tile, []).append(Drop(name, kind, room, 0x8000 >> place, x, y, what))
 
     for room, pots in PotShuffle.vanilla_pots.items():
         for place, pot in enumerate(pots):
             # As create_pot_location in Regions.py has it. A pot over a switch is a check only with pots shuffled
             # too, which is not known here: it is left out, so a room's count can reach none
             if pot.item not in (PotItem.Key, PotItem.Hole, PotItem.Switch):
-                add("pot", room, place, *pot_place(pot), "Large Block" if pot.flags & PotFlags.Block else "Pot")
+                what = "Large Block" if pot.flags & PotFlags.Block else "Pot"
+                add(f"{pot.room} {what if what == 'Large Block' else f'Pot #{place + 1}'}", "pot", room, place, *pot_place(pot), what)
     # The randomizer's own test of an enemy, asked of a seed with every enemy's drop shuffled
     seed = SimpleNamespace(dropshuffle={1: "underworld"}, data_tables={1: SimpleNamespace(enemy_stats=init_enemy_stats())})
     for room, sprites in get_uw_enemy_table().room_map.items():
@@ -107,7 +109,8 @@ def drops() -> dict[tuple[int, int], list[Drop]]:
             # Overlords are in the list but have no bit
             if sprite.sub_type != SpriteType.Overlord:
                 if valid_drop_location(sprite, index, seed, 1):
-                    add("enemy", room, place, sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8, enemy_names[sprite.kind])
+                    name = f"{sprite.region} Enemy #{index + 1}"
+                    add(name, "enemy", room, place, sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8, enemy_names[sprite.kind])
                 place += 1
     return found
 
