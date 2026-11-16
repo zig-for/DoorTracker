@@ -8,7 +8,7 @@ import grpc
 import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
-from gui.Doors.logic import ITEMS_AT
+from gui.Doors.logic import COMPASSES_AT, ITEMS_AT, MAPS_AT
 from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
 from support import VANILLA, a_rom, rom_reads
 
@@ -292,10 +292,32 @@ def test_the_cheat_reads_the_seeds_map_out_of_the_rom(window, app, monkeypatch):
     tile, door = door_facing("No")
     here = (tile, door["x"], door["y"])
     # As the menu leaves it once the tracker is connected
-    window.seed_map_wanted = True
+    window.cheat_wanted = window.seed_map_wanted = True
     play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], rom=a_rom(VANILLA, default_one_way_connections))
 
-    assert not window.seed_map_wanted
+    assert not window.seed_map_wanted and not window.cheat_wanted
     # The ROM has the doors as in the original game: a tab the player has not been in has its dungeon's rooms
     assert set(window.pages["Eastern_Palace"].model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == "Eastern_Palace"}
     assert ("Eastern Cannonball S", "Eastern Lobby Bridge N") in [(link.door, link.linked_door) for link in window.pages["Eastern_Palace"].model.door_links]
+
+
+def test_a_dungeons_map_reveals_its_rooms_and_its_compass_its_boss(window, app, monkeypatch):
+    def rooms_of(dungeon):
+        return {tile for tile, record in SUPERTILES.items() if record.dungeon == dungeon}
+
+    window.set_option("map_reveals", True)
+    window.set_option("compass_reveals", True)
+    tile, door = door_facing("No")
+    here = (tile, door["x"], door["y"])
+    # The player holds Eastern Palace's map and compass, and Desert Palace's map alone
+    (maps_at, eastern_map), (also_maps_at, desert_map), (compasses_at, eastern_compass) = MAPS_AT["Eastern_Palace"], MAPS_AT["Desert_Palace"], COMPASSES_AT["Eastern_Palace"]
+    assert maps_at == also_maps_at
+    held = {maps_at: eastern_map | desert_map, compasses_at: eastern_compass}
+    play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], equipment=held, rom=a_rom(VANILLA, default_one_way_connections))
+
+    eastern, desert, hera = (window.pages[name].model for name in ("Eastern_Palace", "Desert_Palace", "Tower_of_Hera"))
+    assert set(eastern.tiles) == rooms_of("Eastern_Palace") and eastern.bosses == {(8, 12): "Armos Knights"}
+    # A map alone does not say which boss is where
+    assert set(desert.tiles) == rooms_of("Desert_Palace") and desert.bosses == {}
+    # And a dungeon with neither is as the player has mapped it
+    assert set(hera.tiles) < rooms_of("Tower_of_Hera") and not hera.revealed

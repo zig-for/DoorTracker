@@ -40,7 +40,7 @@ from gui.Doors import rooms, seed_map
 from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import checks
 from gui.Doors.layout import REPEL_RANGE
-from gui.Doors.logic import items_held, small_keys
+from gui.Doors.logic import COMPASSES_AT, MAPS_AT, dungeons_with, items_held, small_keys
 from gui.qt.graph_page import Assets, GraphPage
 
 WINDOW_SIZES = {"small": (1064, 632), "medium": (1588, 888), "large": (2088, 1144)}
@@ -77,6 +77,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "simulate": False,
     "follow_player": False,
     "labels": True,
+    "map_reveals": False,
+    "compass_reveals": False,
 }
 
 
@@ -296,7 +298,11 @@ class MainWindow(QMainWindow):
             self.resize(*WINDOW_SIZES[args.size or "medium"])
         self.device: str | None = None
         self.connected = False  # the auto-tracker is reading from a device
-        self.seed_map_wanted = False  # the cheat was asked for: the auto-tracker reads the ROM and calls seed_map_read
+        self.seed_map_wanted = False  # see _reveal: the auto-tracker reads the ROM and calls seed_map_read
+        self.cheat_wanted = False  # the cheat was asked for, and has not been done yet
+        self._seed: tuple[str | None, seed_map.SeedMap] | None = None  # the seed it was read for, and its own map
+        self._maps: frozenset[str] = frozenset()  # the dungeons whose map is held, as last read
+        self._compasses: frozenset[str] = frozenset()
         self._adopt_seed = False  # see new_map
         self.sni_task: asyncio.Task | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -398,15 +404,39 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            self.seed_map_wanted = True
+            self.cheat_wanted = True
+            self._reveal()
 
     def seed_map_read(self, memory: Mapping[str, bytes]) -> None:
         """The parts of the ROM that say what the seed did with the doors, as the auto-tracker just read them."""
-        seed = seed_map.decode(memory)
+        self._seed = (self.seed_hash, seed_map.decode(memory))
+        self._reveal()
+
+    def _reveal(self) -> None:
+        """Show what of the seed's own map has been asked for: all of it by the cheat, a dungeon's rooms once its
+        map is held, and a dungeon's bosses once its compass is, where those options are on.
+
+        The seed's map is read from the ROM once for a seed. Until it has been, this asks the auto-tracker for it,
+        which calls this again through seed_map_read.
+        """
+        with_map = self._maps if self.settings["map_reveals"] else frozenset()
+        with_compass = self._compasses if self.settings["compass_reveals"] else frozenset()
+        maps = [page for name, page in self.pages.items() if self.cheat_wanted or (name in with_map and not page.model.revealed)]
+        bosses = [page for name, page in self.pages.items() if name in with_compass and page.model.bosses_unknown()]
+        if not maps and not bosses:
+            return
+        if self._seed is None or self._seed[0] != self.seed_hash:
+            self.seed_map_wanted = True
+            return
+        seed = self._seed[1]
         links = seed.links(self.settings["decoupled_doors"])
-        for page in self.pages.values():
+        for page in maps:
             mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[page.tab_world]}
-            page.show_seed(links, mine, seed.bosses)
+            # A map alone does not say which boss is where
+            page.show_seed(links, mine, seed.bosses if self.cheat_wanted or page.dungeon_name in with_compass else {})
+        self.cheat_wanted = False
+        for page in bosses:
+            page.reveal_bosses(seed.bosses)
 
     def _option_toggled(self, checked: bool) -> None:
         """A menu option or a toolbar box, named after its setting, was toggled."""
@@ -470,6 +500,8 @@ class MainWindow(QMainWindow):
         add_box("simulate", "Simulate")
         add_box("follow_player", "Follow player")
         add_box("labels", "Labels")
+        add_box("map_reveals", "Map reveals rooms", "Once a dungeon's map is held, its tab gets its rooms, links and entrances from the game")
+        add_box("compass_reveals", "Compass reveals bosses", "Once a dungeon's compass is held, each boss room on its tab shows its boss")
         self.status = QLabel("")  # what the mouse is over
         self.status.setMinimumWidth(50)
         row.addWidget(self.status, 1)
@@ -501,6 +533,8 @@ class MainWindow(QMainWindow):
             self.fps_label.setVisible(bool(value))
         for page in self.pages.values():
             page.option_changed(name)
+        if name in ("map_reveals", "compass_reveals"):
+            self._reveal()
 
     def current_page(self) -> GraphPage:
         return list(self.pages.values())[self.tabs.currentIndex()]
@@ -746,6 +780,8 @@ class MainWindow(QMainWindow):
         if held != self._held:
             # This also puts back anything clicked in the items panel that the game does not agree with
             self.set_held(*held)
+        self._maps, self._compasses = dungeons_with(memory["items"], MAPS_AT), dungeons_with(memory["items"], COMPASSES_AT)
+        self._reveal()
 
     def set_collected(self, check: str, collected: bool) -> None:
         """A check was clicked on the map to collect it, or right clicked to take that back."""

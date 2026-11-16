@@ -220,6 +220,7 @@ class GraphModel:
         self.lobby_doors: list[LobbyDoor] = []
         self.special_doors: dict[str, str] = {}  # door -> icon
         self.bosses: dict[Tile, str] = {}  # boss room -> the boss the player picked for it
+        self.revealed = False  # the map is the seed's own, put here by show_seed
         self.kept_expanded: set[Node] = set()  # see toggle_expanded
         self.sanc_dungeon = False
 
@@ -507,13 +508,14 @@ class GraphModel:
 
         links: the doors the seed joined, in every dungeon, as (door, the door it leads to).
         entrances: this dungeon's own, by name -> the door each comes in by.
-        bosses: every boss room's boss. The ones in this dungeon are picked for their rooms.
+        bosses: boss rooms' bosses, as the seed has them. The ones in this dungeon are picked for their rooms; a
+            boss room not among them keeps what the player picked.
         What can be walked to from the entrances is this dungeon: the links there are kept, and every room is lit.
         """
-        used = self.used_entrances
+        used, picked = self.used_entrances, self.bosses
         notes = {door: icon for door, icon in self.special_doors.items() if door not in self.lobby_door_names()}
         self.reset()
-        self.used_entrances = used
+        self.used_entrances, self.revealed = used, True
         for name, door in entrances.items():
             self.add_lobby_door(door, name)
         self.door_links = [Link(door, leads_to) for door, leads_to in links]
@@ -528,9 +530,21 @@ class GraphModel:
                 self._ensure_tile(room.tile)
         for state in self.tiles.values():
             state.has_been_lit = True
-        self.bosses = {tile: boss for tile, boss in bosses.items() if tile in self.tiles}
+        self.bosses = {tile: boss for tile, boss in (picked | bosses).items() if tile in self.tiles}
         self.relayout()
         self._find_reach()
+
+    def bosses_unknown(self) -> bool:
+        """Whether a boss room on the map has no boss picked."""
+        return any(tile in BOSS_ROOMS and tile not in self.bosses for tile in self.tiles)
+
+    def reveal_bosses(self, bosses: dict[Tile, str]) -> bool:
+        """Pick the seed's own boss for each boss room on the map. Returns whether any changed."""
+        found = {tile: boss for tile, boss in bosses.items() if tile in self.tiles and self.bosses.get(tile) != boss}
+        self.bosses |= found
+        if found:
+            self._find_reach()
+        return bool(found)
 
     def add_tile(
         self,
@@ -647,6 +661,7 @@ class GraphModel:
                 self._join_rank[self.door_links[n]] = rank
         self.lobby_doors = [LobbyDoor(x["door"], x["lobby"]) for x in data.get("lobby_doors", [])]
         self.special_doors = dict(data.get("special_doors", {}))
+        self.revealed = bool(data.get("revealed"))
         self.bosses = {}
         for key, boss in (data.get("bosses") or {}).items():
             column, row = str(key).split("__")
@@ -733,6 +748,7 @@ class GraphModel:
             ),
             "special_doors": dict(self.special_doors),
             "bosses": {f"{x}__{y}": boss for (x, y), boss in self.bosses.items()},
+            "revealed": self.revealed,
             "used_entrances": sorted(self.used_entrances),
             "expanded": sorted(f"{n.x}__{n.y}__{n.part}" for n in self.kept_expanded),
             "graph_layout": {

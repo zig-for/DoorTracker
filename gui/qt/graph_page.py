@@ -1619,6 +1619,11 @@ class GraphPage(QWidget):
         self._needs_fit = True
         self.rebuild()
 
+    def reveal_bosses(self, bosses: dict[Tile, str]) -> None:
+        """Pick the seed's own boss for each boss room on this tab's map."""
+        if self.model.reveal_bosses(bosses):
+            self.rebuild()
+
     def auto_light_tile(self, tile: Tile) -> None:
         """A dark supertile on the map has been seen lit."""
         if self.model.light(tile):
