@@ -93,3 +93,6 @@ all_icons = {**item_table, **all_dungeon_lobbies}
 # A way in that is no entrance: somewhere the player can get to that the map does not lead to yet. It is drawn as
 # a question mark, which is not on the sheet
 REACHABLE = "Reachable"
+
+# A mark that is no item, with the randomizer's picture of it
+CHICKEN = "Chicken"

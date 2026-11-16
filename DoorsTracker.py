@@ -147,6 +147,7 @@ class IconPicker(QDialog):
         for column, name in enumerate(sprites.dungeon_lobbies[world]):
             grid.addWidget(self._button(name, assets, name in taken), len(self.ROWS) + 1, column)
         grid.addWidget(self._button(sprites.REACHABLE, assets, False), len(self.ROWS) + 1, self.ENTRANCES)
+        grid.addWidget(self._button(sprites.CHICKEN, assets, False), len(self.ROWS) + 1, len(self.ROWS[0]) - 1)
 
     def _button(self, name, assets, taken):
         button = QToolButton()

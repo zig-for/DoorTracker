@@ -211,7 +211,7 @@ class Assets:
         if name not in self._icons:
             if name == sprites.REACHABLE:
                 self._icons[name] = question_mark()
-            elif name in ITEMS:
+            elif name in ITEMS or name == sprites.CHICKEN:
                 self._icons[name] = item_icon(name)
             elif name in sprites.all_icons:
                 if self._sheet is None:
