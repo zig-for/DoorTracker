@@ -6,9 +6,9 @@ from PySide6.QtTest import QTest
 from data.doors_data import regions_to_doors
 from gui.Doors.checks import checks
 from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState
-from gui.Doors.logic import ITEMS_AT, ITEMS_LENGTH, items_held
+from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, ORANGE, READABLE, holds, items_held, with_hearts
 from gui.Doors.rooms import DOORS, SPLIT, Node
-from gui.Doors.rules import check_regions
+from gui.Doors.rules import check_regions, check_rules, passage_rules
 from support import new_model
 
 
@@ -64,12 +64,12 @@ def test_a_passage_that_takes_a_lever_opens_once_the_lever_can_be_reached():
 def test_items_are_read_from_the_save_data():
     save = bytearray(ITEMS_LENGTH)
     # Hammer, mitts, a swordless seed's sword byte, the red shield, red boomerang, something in the second bottle,
-    # bombs, and the big keys of Thieves' Town and Turtle Rock
-    equipment = {0x34B: 1, 0x354: 2, 0x359: 0xFF, 0x35A: 2, 0x38C: 0x40, 0x35D: 3, 0x370: 10, 0x366: 0x18}
+    # bombs, five hearts, and the big keys of Thieves' Town and Turtle Rock
+    equipment = {0x34B: 1, 0x354: 2, 0x359: 0xFF, 0x35A: 2, 0x38C: 0x40, 0x35D: 3, 0x370: 10, 0x36C: 0x28, 0x366: 0x18}
     for address, value in equipment.items():
         save[address - ITEMS_AT] = value
     held = {"Hammer", "Power Glove", "Titans Mitts", "Blue Shield", "Red Shield", "Red Boomerang", "Bottle", "Bombs"}
-    assert items_held(bytes(save)) == held | {"Big Key (Thieves Town)", "Big Key (Turtle Rock)"}
+    assert items_held(bytes(save)) == held | {"Big Key (Thieves Town)", "Big Key (Turtle Rock)"} | set(HEARTS[:5])
 
 
 def test_a_check_is_blocked_until_the_item_its_rule_names_is_held():
@@ -79,6 +79,18 @@ def test_a_check_is_blocked_until_the_item_its_rule_names_is_held():
     model.set_items(frozenset({"Big Key (Thieves Town)"}))
     assert model.check_state(name) is CheckState.BLOCKED
     model.set_items(frozenset({"Big Key (Thieves Town)", "Hammer"}))
+    assert model.check_state(name) is CheckState.OPEN
+
+
+def test_a_check_can_take_a_number_of_hearts():
+    # The chest is across spikes: four hearts to walk them, or something that keeps the player from harm
+    name = "Misery Mire - Spike Chest"
+    model = model_leading_to(name, "Misery_Mire")
+    model.set_items(with_hearts(frozenset(), 3))
+    assert model.check_state(name) is CheckState.BLOCKED
+    model.set_items(with_hearts(frozenset(), 4))
+    assert model.check_state(name) is CheckState.OPEN
+    model.set_items(frozenset({"Cape"}))
     assert model.check_state(name) is CheckState.OPEN
 
 
@@ -148,6 +160,48 @@ def test_a_hole_leads_where_it_did_only_when_drops_are_not_shuffled():
         model.add_lobby_door("PoD Pit Room NE", "Palace_of_Darkness")
         model.update()
         assert model.check_state(name) is state, as_they_were
+
+
+def test_a_crystal_barrier_is_passed_once_its_switch_can_be_hit():
+    # The chest is past pegs that are up when a dungeon is entered; the switch is in the same room
+    name = "Tower of Hera - Map Chest"
+    model = new_model("Tower_of_Hera")
+    model.add_tile(checks[name]["tile"], has_been_lit=True)
+    model.add_lobby_door("Hera Lobby S", "Tower_of_Hera")
+    model.update()
+    model.set_items(frozenset())
+    assert model.check_state(name) is CheckState.BLOCKED
+    model.set_items(frozenset({"Fighter Sword"}))
+    assert model.check_state(name) is CheckState.OPEN
+
+
+def test_how_the_crystal_barriers_are_left_is_carried_into_the_next_room():
+    # The way to the chest in the basement is past pegs whose switch is in the lobby above
+    name = "Tower of Hera - Big Key Chest"
+    alone = new_model("Tower_of_Hera")
+    alone.add_tile(checks[name]["tile"], has_been_lit=True)
+    alone.add_lobby_door("Hera Tile Room Up Stairs", "Tower_of_Hera")
+    alone.update()
+    alone.set_items(frozenset(READABLE))
+    assert alone.check_state(name) is CheckState.BLOCKED
+
+    below_the_lobby = new_model("Tower_of_Hera")
+    below_the_lobby.add_tile(checks[name]["tile"], has_been_lit=True)
+    below_the_lobby.add_lobby_door("Hera Lobby S", "Tower_of_Hera")
+    below_the_lobby.add_link("Hera Lobby Key Stairs", "Hera Tile Room Up Stairs")
+    below_the_lobby.set_items(frozenset(READABLE))
+    assert below_the_lobby.check_state(name) is CheckState.OPEN
+
+
+def test_a_rule_can_ask_for_a_region_reached_or_for_something_not_done():
+    # The dry way through the trench is there until it is filled, or with a way to hit the crystal switch
+    dry = passage_rules["Swamp Trench 2 Pots Dry"]
+    assert holds(dry, frozenset())
+    assert not holds(dry, frozenset({"Trench 2 Filled"}))
+    # The chain chomps' chest is hit from below, which takes having got to the room above it
+    chomps = check_rules["Turtle Rock - Chain Chomps"]
+    assert not holds(chomps, frozenset({"Bombs"}), {})
+    assert holds(chomps, frozenset({"Bombs"}), {"TR Chain Chomps Top": ORANGE})
 
 
 def test_a_drop_is_no_way_in_until_the_player_has_used_it_or_says_so():

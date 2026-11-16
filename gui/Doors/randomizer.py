@@ -49,17 +49,37 @@ def tables_in(function: types.FunctionType, *wanted: str) -> list:
 
 
 class _World:
-    """As much of the randomizer's world as building its regions asks of one."""
+    """As much of the randomizer's world as building its regions and its doors asks of one."""
 
     def __init__(self) -> None:
         self.mode = {1: "open"}  # the regions come out the same in standard mode
         self.regions: list = []
+        self.doors: list = []
+        self.dungeon_portals: dict[int, list] = {1: []}
+        self.paired_doors: dict[int, list] = {}
+        self.precollected_items: list = []
+        self.intensity = {1: 3}
+        self.shuffle = {1: "vanilla"}
+        self._portal_cache: dict = {}
+        self._doors: dict[str, object] = {}
 
     def initialize_regions(self) -> None:
         pass
 
     def get_region(self, name: str, player: int):
         return next(region for region in self.regions if region.name == name)
+
+    def initialize_doors(self, doors: list) -> None:
+        self._doors.update({door.name: door for door in doors})
+
+    def get_door(self, name: str, player: int):
+        return self._doors[name]
+
+    def check_for_entrance(self, name: str, player: int) -> None:
+        return None  # the doors are not tied to the regions' ways out: the tracker goes by their names
+
+    def is_dark_chapel_start(self, player: int) -> bool:
+        return False
 
 
 @cache
@@ -74,6 +94,17 @@ def dungeon_regions() -> tuple:
     Regions.create_regions(world, 1)
     Regions.create_dungeon_regions(world, 1)
     return tuple(region for region in world.regions if region.type == RegionType.Dungeon)
+
+
+@cache
+def doors_and_portals() -> tuple[tuple, tuple]:
+    """The randomizer's doors and its dungeon entrances, built by its own code, as they are before a seed moves
+    anything. A door knows where its link is kept in a ROM; an entrance has a name, its door, and its number."""
+    from ALttPDoorRandomizer import Doors
+
+    world = _World()
+    Doors.create_doors(world, 1)
+    return tuple(world.doors), tuple(world.dungeon_portals[1])
 
 
 def dungeon_name(tab: str) -> str:

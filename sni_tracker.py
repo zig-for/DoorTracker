@@ -12,6 +12,7 @@ import grpc.aio
 import sni.sni_pb2 as sni_pb2
 import sni.sni_pb2_grpc as sni
 from data.doors_data import dark_tiles, door_coordinates, doors_data
+from gui.Doors import seed_map
 from gui.Doors.logic import DUNGEON_NUMBERS, ITEMS_AT, ITEMS_LENGTH
 
 # After gui.Doors.logic, which makes the randomizer importable
@@ -62,6 +63,22 @@ def build_multi_request(add_space, mem_mapping, addresses=mem_addresses):
         request.size = size
         requests[name] = request
     return requests
+
+
+async def read_rom(stub, uri: str, add_space, mem_mapping, reads: Mapping[str, tuple[int, int]]) -> dict[str, bytes]:
+    """Read stretches of the ROM, each by name -> (address, length). A long one is read in pieces no longer than the
+    checks' tables, a few to a request, as that much is known to go through."""
+    piece, at_once = check_addresses["room"][1], 4
+    out = {}
+    for name, (address, size) in reads.items():
+        pieces = [(address + offset, min(piece, size - offset)) for offset in range(0, size, piece)]
+        data = b""
+        for first in range(0, len(pieces), at_once):
+            requests = build_multi_request(add_space, mem_mapping, dict(enumerate(pieces[first : first + at_once])))
+            reply = await stub.MultiRead(sni_pb2.MultiReadMemoryRequest(uri=uri, requests=list(requests.values())))
+            data += b"".join(bytes(response.data) for response in reply.responses)
+        out[name] = data
+    return out
 
 
 def des_data(mem_request_names, mem_data):
@@ -120,6 +137,7 @@ class TrackerUI(Protocol):
 
     device: str | None
     connected: bool  # reading from a device through SNI
+    seed_map_wanted: bool  # the window asks for seed_map_read; the tracker sets it back
 
     @property
     def pages(self) -> Mapping[str, TrackerPage]: ...  # by dungeon name
@@ -133,6 +151,8 @@ class TrackerUI(Protocol):
     def seed_seen(self, seed_hash: str) -> bool: ...  # False to stop tracking
 
     def checks_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in check_addresses
+
+    def seed_map_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in seed_map.READS
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -291,6 +311,10 @@ async def _sni_session(
                 reply = await mem_stub.MultiRead(sni_pb2.MultiReadMemoryRequest(uri=dev_uri, requests=list(check_request.values())))
                 ui.checks_read({name: bytes(response.data) for name, response in zip(check_request, reply.responses)})
             readings_to_check_read -= 1
+
+            if ui.seed_map_wanted:
+                ui.seed_map_wanted = False
+                ui.seed_map_read(await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, seed_map.READS))
 
             # if args.darkpos:
             #     is_dark = False

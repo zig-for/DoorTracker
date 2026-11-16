@@ -1,5 +1,7 @@
 """What the player holds, and whether that meets one of the randomizer's rules (gui/Doors/rules.py)."""
 
+from collections.abc import Mapping
+
 from data.worlds_data import dungeon_worlds
 from gui.Doors.randomizer import dungeon_name, tables_in
 
@@ -9,7 +11,9 @@ from ALttPDoorRandomizer.DoorShuffle import compass_data  # noqa: E402
 from ALttPDoorRandomizer.Dungeons import dungeon_bigs, dungeon_keys  # noqa: E402
 from ALttPDoorRandomizer.InitialSram import InitialSram  # noqa: E402
 
-# An item's name, ("all", rule, ...), ("any", rule, ...), or a bool
+# An item's name, ("all", rule, ...), ("any", rule, ...), ("not", rule), or a bool. Or one of two that ask about
+# a region and not about what is held: ("reached", region), and ("down", region, BLUE or ORANGE) for reached with
+# those crystal barriers down
 Rule = bool | str | tuple
 
 # The part of the game's save data that holds the equipment
@@ -65,6 +69,19 @@ BOTTLE = "Bottle"
 READABLE = frozenset(AT_LEAST) | frozenset(BITS) | {BOTTLE}
 SWORD = 0x359
 NO_SWORDS = 0xFF  # what a swordless seed puts in the sword's byte
+HEALTH_AT = 0x36C  # the most health the player can have, in eighths of a heart
+# Hearts are held as these, one for each the player has, so a rule that asks for four asks for the fourth
+HEARTS = [f"{count} Hearts" for count in range(1, 21)]
+FIRST_HEARTS = 3  # what the game starts with
+
+
+def hearts_held(items: frozenset[str]) -> int:
+    return sum(1 for heart in HEARTS if heart in items)
+
+
+def with_hearts(items: frozenset[str], count: int) -> frozenset[str]:
+    """The items with this many hearts in place of however many they had."""
+    return (items - frozenset(HEARTS)) | frozenset(HEARTS[:count])
 
 
 def items_held(save: bytes) -> frozenset[str]:
@@ -78,7 +95,7 @@ def items_held(save: bytes) -> frozenset[str]:
     held |= {item for item, (address, bit) in BITS.items() if at(address) & bit}
     if any(at(address) for address in BOTTLES_AT):
         held.add(BOTTLE)
-    return frozenset(held)
+    return with_hearts(frozenset(held), at(HEALTH_AT) // 8)
 
 
 def small_keys(save: bytes, dungeon: int) -> dict[str, int]:
@@ -94,11 +111,27 @@ def small_keys(save: bytes, dungeon: int) -> dict[str, int]:
     return keys
 
 
-def holds(rule: Rule, items: frozenset[str]) -> bool:
-    """Whether the items meet a rule."""
+# Which crystal barriers are down, as the randomizer counts it: a region can be reached with the blue ones down,
+# the orange ones down, or both, which is EITHER. A dungeon is entered with the orange ones down
+BLUE, ORANGE, EITHER = 1, 2, 3
+
+
+def holds(rule: Rule, items: frozenset[str], reached: Mapping[str, int] | None = None) -> bool:
+    """Whether a rule is met.
+
+    items: what the player holds.
+    reached: region -> the crystal barriers that can be down on getting there, for a rule that asks about a
+    region. None when that is not known: what it asks of a region is then taken as met.
+    """
     if isinstance(rule, bool):
         return rule
     if isinstance(rule, str):
         return rule in items
     kind, *parts = rule
-    return (all if kind == "all" else any)(holds(part, items) for part in parts)
+    if kind == "reached":
+        return reached is None or parts[0] in reached
+    if kind == "down":
+        return reached is None or bool(reached.get(parts[0], 0) & parts[1])
+    if kind == "not":
+        return not holds(parts[0], items, reached)
+    return (all if kind == "all" else any)(holds(part, items, reached) for part in parts)

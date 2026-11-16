@@ -9,7 +9,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import QAbstractButton, QGridLayout, QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget
 
-from gui.Doors.logic import BIG_KEYS, BOTTLE
+from gui.Doors.logic import BIG_KEYS, BOTTLE, FIRST_HEARTS, HEARTS, hearts_held, with_hearts
 from gui.Doors.randomizer import FOLDER
 
 PICTURES = FOLDER / "data" / "itemgfx"  # the randomizer's own, 32 pixels high
@@ -116,6 +116,25 @@ def slot_picture(slot: Slot, held: frozenset[str]) -> QPixmap:
         painter.drawPixmap((CELL - shown.width()) // 2, 0, shown)
     painter.end()
     return cell if mine or slot.start else greyed(cell)
+
+
+def hearts_picture(count: int) -> QPixmap:
+    """A heart container with how many the player has written on it."""
+    cell = QPixmap(CELL, CELL)
+    cell.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(cell)
+    heart = picture("Heart Container")
+    painter.drawPixmap((CELL - heart.width()) // 2, 0, heart)
+    font = QFont()
+    font.setPixelSize(13)
+    font.setBold(True)
+    painter.setFont(font)
+    # White on a black edge, to read over the red
+    for dx, dy, colour in ((1, 1, "black"), (-1, -1, "black"), (1, -1, "black"), (-1, 1, "black"), (0, 0, "white")):
+        painter.setPen(QColor(colour))
+        painter.drawText(cell.rect().translated(dx, dy), Qt.AlignmentFlag.AlignCenter, str(count))
+    painter.end()
+    return cell
 
 
 def states(slot: Slot) -> list[frozenset[str]]:
@@ -250,6 +269,10 @@ class ItemsPanel(QWidget):
         for place, slots in enumerate((ABILITIES, EQUIPMENT)):
             for row, slot in enumerate(slots):
                 grid.addWidget(cell(slot), row, len(MENU[0]) + place)
+        # Under the equipment: how many hearts
+        self.hearts = Cell(self._pressed, "hearts")
+        self.hearts.setFixedSize(CELL, CELL)
+        grid.addWidget(self.hearts, len(EQUIPMENT), len(MENU[0]) + 1)
 
         small = QFont(self.font())
         small.setPixelSize(10)
@@ -277,10 +300,13 @@ class ItemsPanel(QWidget):
         self.toggled(self.body.isHidden())
 
     def _pressed(self, what: object, step: int) -> None:
-        """A slot, a dungeon's small keys or its big key was clicked (step 1) or right clicked (step -1)."""
+        """A slot, the hearts, a dungeon's small keys or its big key was clicked (step 1) or right clicked (step -1)."""
         items, small_keys = self.items, dict(self.small_keys)
         if isinstance(what, Slot):
             items = clicked(what, items, step)
+        elif what == "hearts":
+            count = max(FIRST_HEARTS, hearts_held(items)) + step
+            items = with_hearts(items, min(len(HEARTS), max(FIRST_HEARTS, count)))
         elif isinstance(what, tuple):
             kind, dungeon = what
             if kind == "big key":
@@ -309,6 +335,10 @@ class ItemsPanel(QWidget):
             mine = [item for item in slot.items if item in self.items]
             label.setPixmap(slot_picture(slot, self.items))
             label.setToolTip(", ".join(mine if slot.together else mine[-1:]) or slot.start or slot.items[0])
+        # The game starts with some, which the tracker has not been told of until it reads a game
+        hearts = max(FIRST_HEARTS, hearts_held(self.items))
+        self.hearts.setPixmap(hearts_picture(hearts))
+        self.hearts.setToolTip(f"{hearts} hearts")
         for dungeon, count in self.counts.items():
             held = self.small_keys.get(dungeon, 0)
             count.setText(str(held))

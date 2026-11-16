@@ -28,8 +28,8 @@ from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
 from gui.Doors.checks import checks
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
-from gui.Doors.logic import BIG_KEYS, holds
-from gui.Doors.rules import check_regions, check_rules, events, passage_rules
+from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, holds
+from gui.Doors.rules import check_regions, check_rules, crystals, events, passage_rules
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
@@ -54,6 +54,7 @@ from gui.Doors.rooms import (
 )
 
 # Geometry, in world units (canvas pixels at zoom 1.0)
+EVENTS = frozenset(events)  # what a rule can ask for that is done somewhere, not picked up
 CHECKS_BY_TILE: dict[Tile, list[str]] = defaultdict(list)
 for _name, _check in checks.items():
     CHECKS_BY_TILE[_check["tile"]].append(_name)
@@ -62,6 +63,9 @@ THUMB = 128  # supertile thumbnail edge
 COMPACT_W = 104  # pass-through tiles collapse to a pill
 COMPACT_H = 26
 JOIN_GAP = 4  # gap between joined rooms
+LOBBY_REACH = 30  # how far from its door an entrance's marker is drawn
+MARKER_HALF = 10  # half the side of a marker
+MARKER_NAME = (30, 12, 26)  # an entrance's name by its marker: half its width, and how far from the marker's centre
 SNAP = THUMB / 8  # grid for joined rooms along the shared wall
 
 
@@ -213,9 +217,11 @@ class GraphModel:
         self.compact: set[Node] = set()
         self.blocks = Blocks()
         self.doors_available: set[str] = set()
-        self._routed: set[str] = set()  # regions the map leads to; see _find_reach
-        self._reachable: set[str] = set()  # and those of them the player's items let them walk to
+        self._routed: dict[str, int] = {}  # regions the map leads to; see _find_reach
+        # and those of them the player's items let them walk to, each with the crystal barriers that can be down
+        self._reachable: dict[str, int] = {}
         self._held: frozenset[str] = frozenset()  # the items, and what the player can do with them; see _find_reach
+        self._held_unrouted: frozenset[str] = frozenset()  # the same, for a check with no way to it
         self.player: Player | None = None
         self.visited: set[Node] = set()  # where the player has been; saved as reached_parts
         self.used_entrances: set[str] = set()  # see assumed()
@@ -488,6 +494,33 @@ class GraphModel:
                 self.fixed.add(Node(*tile, part))
         self.update()
         return True
+
+    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str]) -> None:
+        """A cheat: this tab's dungeon as the seed made it, in place of the map that was there.
+
+        links: the doors the seed joined, in every dungeon, as (door, the door it leads to).
+        entrances: this dungeon's own, by name -> the door each comes in by.
+        What can be walked to from the entrances is this dungeon: the links there are kept, and every room is lit.
+        """
+        used = self.used_entrances
+        notes = {door: icon for door, icon in self.special_doors.items() if door not in self.lobby_door_names()}
+        self.reset()
+        self.used_entrances = used
+        for name, door in entrances.items():
+            self.add_lobby_door(door, name)
+        self.door_links = [Link(door, leads_to) for door, leads_to in links]
+        reached, _ = self._walk(self.lobby_door_names(), None)
+        self.door_links = [link for link in self.door_links if any(region in reached for region in regions_at(link.door))]
+        self.special_doors.update(notes)
+        self._sync_model()
+        # A room with no doors is only fallen or warped into, so no link brings it onto the map
+        for region, room in rooms.DOORLESS_ROOMS.items():
+            if region in reached:
+                self._ensure_tile(room.tile)
+        for state in self.tiles.values():
+            state.has_been_lit = True
+        self.relayout()
+        self._find_reach()
 
     def add_tile(
         self,
@@ -820,13 +853,9 @@ class GraphModel:
                 drain()
         return seen
 
-    def _regions_from(self, starts: list[str], items: frozenset[str] | None) -> set[str]:
-        """Regions that can be walked to from some doors, going through each door and passage only the way it goes.
-
-        items: what the player holds. A door or passage whose rule they do not meet is not gone through.
-        None for no rules.
-        """
-        leads = defaultdict(list)  # door or passage -> the doors and regions it comes out at
+    def _leads(self) -> dict[str, list[str]]:
+        """Door or passage -> the doors and regions it comes out at, each only the way it goes."""
+        leads = defaultdict(list)
         # Where a hole lands in the original game is only where it lands here if the option says so
         moved = set() if self.experimental_flags.get("vanilla_drops") else HOLES
         for a, b in DEFAULT_DOORS.items():
@@ -842,43 +871,69 @@ class GraphModel:
                 # A fall is tracked as a link too, and nothing comes up out of a hole
                 if b not in ONE_WAY:
                     leads[a].append(b)
+        return leads
 
-        reached = set()
-        queue = deque()
+    def _walk(self, starts: list[str], items: frozenset[str] | None) -> tuple[dict[str, int], frozenset[str]]:
+        """Walk from some doors as the randomizer does, going through each door and passage only the way it goes.
 
-        def arrive(name):
+        Returns the regions reached, each with the crystal barriers that can be down on getting there (BLUE,
+        ORANGE, or EITHER for both), and what the player holds by the end: their items, and what gets done on the
+        way, like draining the swamp.
+
+        A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met.
+        What is reached stays reached. A rule can ask for something done or for a region reached, so whenever
+        there is more of either, every way out is tried again.
+
+        items: what the player holds. None for no rules and no barriers.
+        """
+        leads = self._leads()
+        reached: dict[str, int] = {}
+        held = items or frozenset()
+        queue: deque[str] = deque()
+
+        def arrive(name: str, down: int) -> None:
             for region in regions_at(name):
-                if region not in reached:
-                    reached.add(region)
+                if reached.get(region, 0) | down != reached.get(region, 0):
+                    reached[region] = reached.get(region, 0) | down
                     queue.append(region)
 
         for start in starts:
-            arrive(start)
-        while queue:
-            for way_out in regions_to_doors.get(queue.popleft(), ()):
-                if items is None or holds(passage_rules.get(way_out, True), items):
-                    for target in leads.get(way_out, ()):
-                        arrive(target)
-        return reached
+            # A dungeon is entered with the orange barriers down
+            arrive(start, EITHER if items is None else ORANGE)
+        tried = None  # how much was reached and held when every way out was last tried again
+        while True:
+            while queue:
+                region = queue.popleft()
+                down = reached[region]
+                for way_out in regions_to_doors.get(region, ()):
+                    # A way through a barrier takes its colour down, and leaves it down. The way back from hitting
+                    # a crystal switch leaves whichever the player likes
+                    barrier = crystals.get(way_out, 0)
+                    if items is None or ((not barrier or down & barrier) and holds(passage_rules.get(way_out, True), held, reached)):
+                        for target in leads.get(way_out, ()):
+                            arrive(target, barrier or down)
+            if items is None:
+                break
+            held |= {event for event, (region, rule) in events.items() if region in reached and holds(rule, held, reached)}
+            # Both only ever grow, so these numbers are the same only when nothing has changed
+            now = (len(reached), sum(reached.values()), len(held))
+            if now == tried:
+                break
+            tried = now
+            queue.extend(reached)
+        return reached, held
 
     def _find_reach(self) -> None:
         """Work out which regions the map leads to, and which of them the player's items let them walk to."""
         # Only an entrance is a place to start from: a room nothing leads to has no way to it yet
         starts = [door for door in self.lobby_door_names() if not self.assumed(door)]
-        self._routed = routed = self._regions_from(starts, None)
+        self._routed, _ = self._walk(starts, None)
         if self.items is None:
-            self._reachable, self._held = routed, frozenset()
+            self._reachable, self._held, self._held_unrouted = self._routed, frozenset(), frozenset()
             return
-        # Some passages take something done elsewhere in the dungeon, like draining the swamp. That counts as held
-        # once the place it is done at can be walked to, which can open the way to the next
-        held = self.items
-        while True:
-            reachable = self._regions_from(starts, held)
-            done = {event for event, (region, rule) in events.items() if event not in held and region in reachable and holds(rule, held)}
-            if not done:
-                break
-            held = held | done
-        self._reachable, self._held = reachable, held
+        self._reachable, self._held = self._walk(starts, self.items)
+        # For a check the map does not lead to, what gets done on the way to it is not known: only items are asked
+        self._held_unrouted = self._held | EVENTS
 
     def set_items(self, items: frozenset[str] | None) -> None:
         self.items = items
@@ -891,10 +946,17 @@ class GraphModel:
         if name.endswith("- Big Chest"):
             # A big chest takes the big key of the dungeon it is in, which with crossed doors is this tab's
             rule = ("all", rule, BIG_KEYS[self.dungeon_name])
-        opens = self.items is None or holds(rule, self._held)
+        routed = region in self._routed
+        if self.items is None:
+            opens = True
+        elif routed:
+            opens = holds(rule, self._held, self._reachable)
+        else:
+            # Nor is it known what would be reached by then: what the rule asks of a region is taken as met
+            opens = holds(rule, self._held_unrouted)
         if opens and region in self._reachable:
             return CheckState.OPEN
-        if region in self._routed:
+        if routed:
             return CheckState.BLOCKED
         return CheckState.UNROUTED if opens else CheckState.UNROUTED_BLOCKED
 
@@ -955,6 +1017,35 @@ class GraphModel:
                 )
             )
         return pieces
+
+    def lobby_direction(self, door: str) -> tuple[int, int]:
+        """The way an entrance's marker hangs off its door. (0, 0) for one drawn on the spot, having no dot to
+        point at."""
+        if self.is_hidden_dark(self.rooms.node(door).tile):
+            return (0, 1)
+        if entrance_only(door):
+            return (0, 0)
+        if "Drop" in door:
+            return (0, -1)
+        return door_vector(door) or (0, 1)
+
+    def marker_boxes(self, node: Node) -> list[Box]:
+        """Where the entrances on a node have their markers, stems and names, relative to the supertile centre.
+        The layout keeps other rooms off them."""
+        boxes = []
+        for lobby in self.lobby_doors:
+            if lobby.door not in DOORS or self.rooms.node(lobby.door) != node:
+                continue
+            dx, dy = self.lobby_direction(lobby.door)
+            if (dx, dy) == (0, 0):
+                continue
+            x, y = self.port_offset(lobby.door)
+            mx, my = x + dx * LOBBY_REACH, y + dy * LOBBY_REACH
+            boxes.append((min(x, mx) - MARKER_HALF, min(y, my) - MARKER_HALF, max(x, mx) + MARKER_HALF, max(y, my) + MARKER_HALF))
+            # The name is under the marker, or over one that points up
+            half, near, far = MARKER_NAME
+            boxes.append((mx - half, my + near, mx + half, my + far) if dy >= 0 else (mx - half, my - far, mx + half, my - near))
+        return boxes
 
     def box(self, node: Node) -> Box:
         """Bounding box of a node's pieces."""
@@ -1038,7 +1129,8 @@ class GraphModel:
         root = {n: n for n in nodes}
         off = {n: (0.0, 0.0) for n in nodes}
         members = {n: [n] for n in nodes}
-        boxes = {n: self.pieces(n) for n in nodes}
+        # A room is not joined on where it would sit on another's entrance marker
+        boxes = {n: self.pieces(n) + self.marker_boxes(n) for n in nodes}
         # Parts of a supertile shown whole stay in one block at zero offset
         for tile in self._whole:
             parts = [n for n in nodes if n.tile == tile]
@@ -1354,7 +1446,7 @@ class GraphModel:
                 rects = self._body_rects[root] = []
                 for m in members:
                     ox, oy = self.blocks.offset[m]
-                    for left, top, right, bottom in self.pieces(m):
+                    for left, top, right, bottom in self.pieces(m) + self.marker_boxes(m):
                         rects.append((ox + (left + right) / 2, oy + (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2))
             if any(m in self.fixed or m in self.held for m in members):
                 mobility = 0.0
