@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -14,6 +14,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QCursor,
     QFont,
     QFontMetricsF,
     QImage,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +48,7 @@ from data.doors_sprite_data import ITEM_SHEET_PATH, POT_PATH
 from data.room_bounds import room_bounds
 from data.worlds_data import World
 from gui.Doors import bosses
+from gui.Doors.checks import Drop
 from gui.Doors.graph_model import LOBBY_REACH, THUMB, Edge, GraphModel, TileState
 from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
@@ -96,6 +99,8 @@ CHECK_EDGE = 1.5  # how much of the square shows round a picture in it
 POT_EDGE = 2.0  # and round a pot
 KEY_PICTURES = {"enemy": "Small Key", "big key": BIG_KEY_PICTURE}  # a dropped key's kind -> the randomizer's picture
 BOSS_SIZE = 12.0  # side of a boss room's boss
+COUNT_SIZE = 6  # height of a room's counts of pots and enemies
+TIP_DELAY = 400  # ms the mouse stays on a count before what it counts pops up
 # A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
 # shifts by less than this on every solver step, which would otherwise redraw everything
 STILL = 0.1
@@ -111,6 +116,7 @@ class Hit:
     edge: Edge | None = None  # a line between doors
     check: str | None = None  # a check's square, with the node it is on
     boss: Tile | None = None  # a boss room's boss, with the node it is on
+    count: str | None = None  # a room's count of "pot" or of "enemy", with the node it is on
 
 
 @dataclass
@@ -515,6 +521,25 @@ class DoorsItem(QGraphicsItem):
     def shape(self):
         return QPainterPath()
 
+    def counts(self) -> list[tuple[str, QRectF, list[Drop]]]:
+        """The room's counts of what is still to be had: (kind, where its picture and number are drawn, what it
+        counts) for its enemies and for its pots.
+
+        They are in the bottom left corner of the room's lowest piece, as a room is not always a rectangle, with
+        the pots over the enemies: side by side they reach under a door in the wall.
+        """
+        page = self.page
+        if not page.top.settings["show_checks"]:
+            return []
+        left = page.model.drops_on(self.node, page.top.drops_left(self.node.tile))
+        x, _top, _right, bottom = max(page.model.pieces(self.node), key=lambda piece: (piece[3], -piece[0]))
+        found = []
+        for kind in ("enemy", "pot"):
+            mine = [drop for drop in left if drop.kind == kind]
+            if mine:
+                found.append((kind, QRectF(x + 3, bottom - 3 - (COUNT_SIZE + 1) * len(found) - COUNT_SIZE, COUNT_SIZE * 3, COUNT_SIZE), mine))
+        return found
+
     def paint(self, painter, option, widget=None):
         page = self.page
         # Checks are squares, under the door dots: green to find, red when the player's items do not get it,
@@ -536,6 +561,20 @@ class DoorsItem(QGraphicsItem):
                 painter.setOpacity(0.35 if check.name in page.top.collected else 1.0)
                 draw_pixel_art(painter, QRectF(check.x - wide / 2, check.y - tall / 2, wide, tall), shown)
                 painter.setOpacity(1.0)
+        # How many pots, and how many enemies, here are checks still to be had
+        font = QFont()
+        font.setPixelSize(COUNT_SIZE)
+        font.setBold(True)
+        painter.setFont(font)
+        for kind, box, left in self.counts():
+            shown = page.assets.pot() if kind == "pot" else page.assets.icon("Skull")
+            assert shown is not None  # the sheet has a skull
+            draw_pixel_art(painter, QRectF(box.left(), box.top(), COUNT_SIZE, COUNT_SIZE), shown)
+            # White on a black edge, to read over the room
+            for dx, dy, colour in ((0.5, 0.5, "black"), (-0.5, -0.5, "black"), (0.5, -0.5, "black"), (-0.5, 0.5, "black"), (0, 0, "white")):
+                painter.setPen(QColor(colour))
+                number = box.adjusted(COUNT_SIZE + 1 + dx, dy, dx, dy)
+                painter.drawText(number, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, str(len(left)))
         # A boss room's boss. Until the player has picked it, a skull with a question mark on the corner
         half = BOSS_SIZE / 2
         for boss in self.bosses:
@@ -902,6 +941,11 @@ class GraphPage(QWidget):
         self.text_colour = QColor("#111") if background.lightness() > 150 else QColor("white")
         self.selected_door: str | None = None  # first door of a link being made
         self.hot_door: str | None = None  # door under the mouse
+        self._tip = ""  # what is popped up by the mouse; see set_hover
+        self._tip_timer = QTimer(self)
+        self._tip_timer.setSingleShot(True)
+        self._tip_timer.setInterval(TIP_DELAY)
+        self._tip_timer.timeout.connect(self._show_tip)
         self._focus: Node | None = None  # hovered room; links not touching it are faded
         self._press: Press | None = None
         self._rooms: dict[Node, RoomItem] = {}
@@ -1228,6 +1272,9 @@ class GraphPage(QWidget):
             for boss in self._doors[hit.node].bosses:
                 if abs(scene_pos.x() - x - boss.x) <= BOSS_SIZE / 2 and abs(scene_pos.y() - y - boss.y) <= BOSS_SIZE / 2:
                     return Hit(node=hit.node, boss=boss.tile)
+            for kind, box, _left in self._doors[hit.node].counts():
+                if box.contains(scene_pos.x() - x, scene_pos.y() - y):
+                    return Hit(node=hit.node, count=kind)
         return hit
 
     # ------------------------------------------------------------------- mouse
@@ -1382,9 +1429,13 @@ class GraphPage(QWidget):
 
     # ------------------------------------------------------------------- hover
 
+    def _show_tip(self) -> None:
+        QToolTip.showText(QCursor.pos(), self._tip, self.view)
+
     def set_hover(self, hit: Hit) -> None:
         """Show what the mouse is over in the status line, and highlight it."""
         model = self.model
+        tip = ""  # what pops up by the mouse: a count's list of what it counts
         if hit.door != self.hot_door:
             self.hot_door = hit.door
             self._repaint_doors()
@@ -1416,6 +1467,11 @@ class GraphPage(QWidget):
                 text = hit.check + ("   (collected)" if hit.check in self.top.collected else "")
             elif hit.boss is not None:
                 text = f"Boss: {model.bosses.get(hit.boss, '?   (click to pick)')}"
+            elif hit.count is not None:
+                # What the count is counting, by name
+                (left,) = [left for kind, _box, left in self._doors[node].counts() if kind == hit.count]
+                named = Counter(drop.name for drop in left)
+                text = tip = ", ".join(name if count == 1 else f"{count} {name}" for name, count in named.items())
             elif model.is_hidden_dark(node.tile):
                 text = "Dark room"
             else:
@@ -1426,6 +1482,14 @@ class GraphPage(QWidget):
             focus = model.rooms.node(hit.icon)
         else:
             text, focus = "", None
+        if tip != self._tip:
+            # Shown once the mouse has stayed on it a moment
+            self._tip = tip
+            QToolTip.hideText()
+            if tip:
+                self._tip_timer.start()
+            else:
+                self._tip_timer.stop()
         if self.selected_door:
             text = f"Linking {self.selected_door} — click another door (Esc to cancel)   {text}"
         if text != self.status.text():

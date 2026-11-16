@@ -38,7 +38,7 @@ from data.worlds_data import World, dungeon_worlds
 from gui import files
 from gui.Doors import rooms, seed_map
 from gui.Doors.bosses import BOSSES
-from gui.Doors.checks import checks
+from gui.Doors.checks import DROPS, Drop, checks
 from gui.Doors.layout import REPEL_RANGE
 from gui.Doors.logic import COMPASSES_AT, MAPS_AT, dungeons_with, items_held, small_keys
 from gui.qt.graph_page import Assets, GraphPage
@@ -79,6 +79,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "labels": True,
     "map_reveals": False,
     "compass_reveals": False,
+    "pottery": False,
+    "enemy_drops": False,
 }
 
 
@@ -285,6 +287,7 @@ class MainWindow(QMainWindow):
         self.seed_hash: str | None = None  # of the game the map was made on, once known; kept in the tracker file
         self.collected: set[str] = set()  # checks collected, by name in gui/Doors/checks.py; kept in the tracker file
         self._held: tuple[frozenset[str], dict[str, int]] | None = None  # the items and small keys last read or clicked
+        self._drops_taken: dict[str, bytes] = {}  # the tables of pots emptied and enemy drops taken, as last read
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.timeout.connect(self._save_after_change)
@@ -502,6 +505,9 @@ class MainWindow(QMainWindow):
         add_box("labels", "Labels")
         add_box("map_reveals", "Map reveals rooms", "Once a dungeon's map is held, its tab gets its rooms, links and entrances from the game")
         add_box("compass_reveals", "Compass reveals bosses", "Once a dungeon's compass is held, each boss room on its tab shows its boss")
+        # Named as the randomizer names the settings they are for
+        add_box("pottery", "Pottery", "For a seed with Pottery set to Dungeon Pots or Lottery: each room counts down its pots not yet emptied")
+        add_box("enemy_drops", "Enemy Drops", "For a seed with Enemy Drops set to Underworld Enemies: each room counts down its enemies' drops not yet taken")
         self.status = QLabel("")  # what the mouse is over
         self.status.setMinimumWidth(50)
         row.addWidget(self.status, 1)
@@ -535,6 +541,9 @@ class MainWindow(QMainWindow):
             page.option_changed(name)
         if name in ("map_reveals", "compass_reveals"):
             self._reveal()
+        if name in ("pottery", "enemy_drops"):
+            for page in self.pages.values():
+                page.scene.update()
 
     def current_page(self) -> GraphPage:
         return list(self.pages.values())[self.tabs.currentIndex()]
@@ -773,8 +782,10 @@ class MainWindow(QMainWindow):
             return int.from_bytes(memory[table][room * 2 : room * 2 + 2], "little")
 
         collected = {name for name, check in checks.items() if any(word(table, room) & mask for table, room, mask in check["flags"])}
-        if collected != self.collected:
+        taken = {kind: memory[kind] for kind in ("pot", "enemy")}
+        if collected != self.collected or taken != self._drops_taken:
             # This also puts back any check clicked on the map that the game does not agree with
+            self._drops_taken = taken
             self._set_collected(collected)
         held = items_held(memory["items"]), small_keys(memory["items"], memory["dungeon"][0])
         if held != self._held:
@@ -782,6 +793,20 @@ class MainWindow(QMainWindow):
             self.set_held(*held)
         self._maps, self._compasses = dungeons_with(memory["items"], MAPS_AT), dungeons_with(memory["items"], COMPASSES_AT)
         self._reveal()
+
+    def drops_left(self, tile: rooms.Tile) -> list[Drop]:
+        """The pots, and the enemies, of a supertile still to be had, of the kinds the toolbar says this seed makes
+        checks of. None until a game's tables of what has been taken have been read.
+
+        Which ones a seed made checks of is not read from the game: that would say where they are. So this is
+        right for a seed where every dungeon pot is a check, or every enemy.
+        """
+        counted = {kind for kind, option in (("pot", "pottery"), ("enemy", "enemy_drops")) if self.settings[option]}
+
+        def taken(drop: Drop) -> bool:
+            return bool(int.from_bytes(self._drops_taken[drop.kind][drop.room * 2 : drop.room * 2 + 2], "little") & drop.mask)
+
+        return [drop for drop in DROPS.get(tile, ()) if drop.kind in counted and not taken(drop)] if self._drops_taken else []
 
     def set_collected(self, check: str, collected: bool) -> None:
         """A check was clicked on the map to collect it, or right clicked to take that back."""

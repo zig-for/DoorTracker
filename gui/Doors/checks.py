@@ -14,15 +14,17 @@ the randomizer's own pot or enemy table, numbered by the pot's or enemy's place 
 bit is listed for those as well, in case a version of the rom sets that instead.
 """
 
-from typing import TypedDict
+from types import SimpleNamespace
+from typing import NamedTuple, TypedDict
 
 from data.new_location_data import underworld_items
 from gui.Doors.rooms import SUPERTILES
 
 # After gui.Doors.rooms, which goes by gui.Doors.randomizer: that makes these importable
 from ALttPDoorRandomizer import PotShuffle  # noqa: E402
-from ALttPDoorRandomizer.BaseClasses import PotItem  # noqa: E402
+from ALttPDoorRandomizer.BaseClasses import PotFlags, PotItem  # noqa: E402
 from ALttPDoorRandomizer.MultiClient import location_table_boss, location_table_uw  # noqa: E402
+from ALttPDoorRandomizer.source.dungeon.EnemyList import SpriteType, enemy_names, init_enemy_stats, valid_drop_location  # noqa: E402
 from ALttPDoorRandomizer.source.rom.DataTables import get_uw_enemy_table  # noqa: E402
 
 KINDS = ("chest", "prize")  # what is placed by data/new_location_data.py
@@ -65,6 +67,50 @@ def key_drops() -> dict[str, Check]:
     return found
 
 
+class Drop(NamedTuple):
+    """A pot, or an enemy, that a seed makes a check of when every one is: it has no name here, only its bit and
+    its place."""
+
+    kind: str  # "pot" or "enemy": the table its bit is in, as in a check's flags
+    room: int
+    mask: int
+    x: int  # in the supertile, 0..512
+    y: int
+    name: str  # what it is, as the randomizer names it: an enemy's kind, or "Pot" or "Large Block"
+
+
+def drops() -> dict[tuple[int, int], list[Drop]]:
+    """The pots and the enemies in a dungeon that are checks in a seed with Pottery set to Dungeon Pots, or Enemy
+    Drops to Underworld Enemies: by supertile. Not the ones with a key, which are checks with names. Each has its
+    bit as the randomizer's client works it out, in init_lookups."""
+    found: dict[tuple[int, int], list[Drop]] = {}
+
+    def add(kind: str, room: int, place: int, x: int, y: int, name: str) -> None:
+        tile = (room % 16, room // 16)
+        if tile in SUPERTILES:
+            found.setdefault(tile, []).append(Drop(kind, room, 0x8000 >> place, x, y, name))
+
+    for room, pots in PotShuffle.vanilla_pots.items():
+        for place, pot in enumerate(pots):
+            # As create_pot_location in Regions.py has it. A pot over a switch is a check only with pots shuffled
+            # too, which is not known here: it is left out, so a room's count can reach none
+            if pot.item not in (PotItem.Key, PotItem.Hole, PotItem.Switch):
+                # Its place as for a key pot, in key_drops
+                name = "Large Block" if pot.flags & PotFlags.Block else "Pot"
+                add("pot", room, place, (pot.x & 0x7F) * 4 + 8, (pot.y * 2 + (pot.x >> 7)) * 8 + 8, name)
+    # The randomizer's own test of an enemy, asked of a seed with every enemy's drop shuffled
+    seed = SimpleNamespace(dropshuffle={1: "underworld"}, data_tables={1: SimpleNamespace(enemy_stats=init_enemy_stats())})
+    for room, sprites in get_uw_enemy_table().room_map.items():
+        place = 0
+        for index, sprite in enumerate(sprites):
+            # Overlords are in the list but have no bit
+            if sprite.sub_type != SpriteType.Overlord:
+                if valid_drop_location(sprite, index, seed, 1):
+                    add("enemy", room, place, sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8, enemy_names[sprite.kind])
+                place += 1
+    return found
+
+
 def read() -> dict[str, Check]:
     # From the randomizer's client: check -> (room, mask in the room's save data), and dungeon prize -> mask in
     # the prizes word
@@ -90,3 +136,4 @@ def read() -> dict[str, Check]:
 
 
 checks = read()
+DROPS = drops()

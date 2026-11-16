@@ -9,7 +9,7 @@ Save format is compatible with the original grid tracker.
 import math
 import random
 from collections import defaultdict, deque
-from collections.abc import Container
+from collections.abc import Container, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -28,7 +28,7 @@ from data.doors_sprite_data import REACHABLE
 from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
 from gui.Doors.bosses import BOSS_ROOMS, beating
-from gui.Doors.checks import BIG_KEY_DROPS, checks
+from gui.Doors.checks import BIG_KEY_DROPS, Drop, checks
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, holds
 from gui.Doors.rules import check_regions, check_rules, crystals, events, passage_rules
@@ -1627,6 +1627,14 @@ class GraphModel:
         else:
             self.bosses[tile] = boss
         self._find_reach()
+
+    def drops_on(self, node: Node, drops: Sequence[Drop]) -> list[Drop]:
+        """Those of a supertile's pots and enemies that are on a node. None on a pill, or on a dark room not yet
+        seen lit. In a split supertile each is on the part it is drawn in."""
+        if node in self.compact or self.is_hidden_dark(node.tile):
+            return []
+        split = self.rooms.part_count(node.tile) > 1
+        return [drop for drop in drops if not split or self.player_node(node.tile, drop.x, drop.y) == node]
 
     def check_spots(self, node: Node) -> list[CheckSpot]:
         """The checks drawn on a node. None on a pill, or on a dark room not yet seen lit."""

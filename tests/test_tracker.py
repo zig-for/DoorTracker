@@ -8,6 +8,7 @@ import grpc
 import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
+from gui.Doors.checks import DROPS
 from gui.Doors.logic import COMPASSES_AT, ITEMS_AT, MAPS_AT
 from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
 from support import VANILLA, a_rom, rom_reads
@@ -299,6 +300,19 @@ def test_the_cheat_reads_the_seeds_map_out_of_the_rom(window, app, monkeypatch):
     # The ROM has the doors as in the original game: a tab the player has not been in has its dungeon's rooms
     assert set(window.pages["Eastern_Palace"].model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == "Eastern_Palace"}
     assert ("Eastern Cannonball S", "Eastern Lobby Bridge N") in [(link.door, link.linked_door) for link in window.pages["Eastern_Palace"].model.door_links]
+
+
+def test_a_rooms_pots_are_counted_down_as_they_are_emptied(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    here = (tile, door["x"], door["y"])
+    room = (12, 8)
+    pots = [drop for drop in DROPS[room] if drop.kind == "pot"]
+    window.set_option("pottery", True)
+    # Not counted until a game has been read
+    assert window.drops_left(room) == []
+    play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], collected=[("pot", pots[0].room, pots[0].mask)])
+    # The room's enemies are not counted: that takes the other box
+    assert window.drops_left(room) == pots[1:]
 
 
 def test_a_dungeons_map_reveals_its_rooms_and_its_compass_its_boss(window, app, monkeypatch):
