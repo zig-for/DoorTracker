@@ -534,9 +534,8 @@ class GraphModel:
         self.relayout()
         self._find_reach()
 
-    def bosses_unknown(self) -> bool:
-        """Whether a boss room on the map has no boss picked."""
-        return any(tile in BOSS_ROOMS and tile not in self.bosses for tile in self.tiles)
+    def has_boss_room(self) -> bool:
+        return any(tile in BOSS_ROOMS for tile in self.tiles)
 
     def reveal_bosses(self, bosses: dict[Tile, str]) -> bool:
         """Pick the seed's own boss for each boss room on the map. Returns whether any changed."""

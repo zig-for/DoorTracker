@@ -532,6 +532,8 @@ class DoorsItem(QGraphicsItem):
         if not page.top.settings["show_checks"]:
             return []
         left = page.model.drops_on(self.node, page.top.drops_left(self.node.tile))
+        if not left:
+            return []
         x, _top, _right, bottom = max(page.model.pieces(self.node), key=lambda piece: (piece[3], -piece[0]))
         found = []
         for kind in ("enemy", "pot"):
@@ -562,11 +564,13 @@ class DoorsItem(QGraphicsItem):
                 draw_pixel_art(painter, QRectF(check.x - wide / 2, check.y - tall / 2, wide, tall), shown)
                 painter.setOpacity(1.0)
         # How many pots, and how many enemies, here are checks still to be had
-        font = QFont()
-        font.setPixelSize(COUNT_SIZE)
-        font.setBold(True)
-        painter.setFont(font)
-        for kind, box, left in self.counts():
+        counts = self.counts()
+        if counts:
+            font = QFont()
+            font.setPixelSize(COUNT_SIZE)
+            font.setBold(True)
+            painter.setFont(font)
+        for kind, box, left in counts:
             shown = page.assets.pot() if kind == "pot" else page.assets.icon("Skull")
             assert shown is not None  # the sheet has a skull
             draw_pixel_art(painter, QRectF(box.left(), box.top(), COUNT_SIZE, COUNT_SIZE), shown)

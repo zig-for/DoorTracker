@@ -39,6 +39,12 @@ class Check(TypedDict):
     flags: list[tuple[str, int, int]]
 
 
+def pot_place(pot) -> tuple[int, int]:
+    """Where a pot is in its supertile, 0..512. The randomizer counts its place in half tiles across and two tiles
+    down, with the odd row kept in x's top bit; a pot is two tiles wide."""
+    return (pot.x & 0x7F) * 4 + 8, (pot.y * 2 + (pot.x >> 7)) * 8 + 8
+
+
 def key_drops() -> dict[str, Check]:
     """The keys in pots and dropped by enemies: where the randomizer has the pot or enemy, and the bit it sets,
     worked out as the randomizer's client does."""
@@ -50,10 +56,7 @@ def key_drops() -> dict[str, Check]:
             # A pot: its room
             room = where
             (index,) = [k for k, pot in enumerate(PotShuffle.vanilla_pots[room]) if pot.item == PotItem.Key]
-            pot = PotShuffle.vanilla_pots[room][index]
-            # Its place is counted in half tiles across and two tiles down, the odd row kept in x's top bit; a
-            # pot is two tiles wide
-            x, y = (pot.x & 0x7F) * 4 + 8, (pot.y * 2 + (pot.x >> 7)) * 8 + 8
+            x, y = pot_place(PotShuffle.vanilla_pots[room][index])
             flag = ("pot", room, 0x8000 >> index)
         else:
             # An enemy: (address, room, its place in the room's list)
@@ -95,9 +98,7 @@ def drops() -> dict[tuple[int, int], list[Drop]]:
             # As create_pot_location in Regions.py has it. A pot over a switch is a check only with pots shuffled
             # too, which is not known here: it is left out, so a room's count can reach none
             if pot.item not in (PotItem.Key, PotItem.Hole, PotItem.Switch):
-                # Its place as for a key pot, in key_drops
-                name = "Large Block" if pot.flags & PotFlags.Block else "Pot"
-                add("pot", room, place, (pot.x & 0x7F) * 4 + 8, (pot.y * 2 + (pot.x >> 7)) * 8 + 8, name)
+                add("pot", room, place, *pot_place(pot), "Large Block" if pot.flags & PotFlags.Block else "Pot")
     # The randomizer's own test of an enemy, asked of a seed with every enemy's drop shuffled
     seed = SimpleNamespace(dropshuffle={1: "underworld"}, data_tables={1: SimpleNamespace(enemy_stats=init_enemy_stats())})
     for room, sprites in get_uw_enemy_table().room_map.items():

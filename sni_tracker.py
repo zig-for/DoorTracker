@@ -152,9 +152,10 @@ class TrackerUI(Protocol):
 
     def seed_seen(self, seed_hash: str) -> bool: ...  # False to stop tracking
 
-    def checks_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in check_addresses
+    # What was read, and the seed of the game it was read from: the window's map may be another's by then
+    def checks_read(self, memory: Mapping[str, bytes], seed_hash: str) -> None: ...  # by name in check_addresses
 
-    def seed_map_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in seed_map.READS and next_reads
+    def seed_map_read(self, memory: Mapping[str, bytes], seed_hash: str) -> None: ...  # by name in seed_map.READS and next_reads
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -311,7 +312,7 @@ async def _sni_session(
             if readings_to_check_read == 0:
                 readings_to_check_read = READINGS_PER_CHECK_READ
                 reply = await mem_stub.MultiRead(sni_pb2.MultiReadMemoryRequest(uri=dev_uri, requests=list(check_request.values())))
-                ui.checks_read({name: bytes(response.data) for name, response in zip(check_request, reply.responses)})
+                ui.checks_read({name: bytes(response.data) for name, response in zip(check_request, reply.responses)}, data["seed_hash"])
             readings_to_check_read -= 1
 
             if ui.seed_map_wanted:
@@ -322,7 +323,7 @@ async def _sni_session(
                     memory |= await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, reads)
                     reads = seed_map.next_reads(memory)
                 ui.seed_map_wanted = False
-                ui.seed_map_read(memory)
+                ui.seed_map_read(memory, data["seed_hash"])
 
             # if args.darkpos:
             #     is_dark = False

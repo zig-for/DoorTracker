@@ -313,6 +313,26 @@ def test_a_rooms_pots_are_counted_down_as_they_are_emptied(window, app, monkeypa
     play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], collected=[("pot", pots[0].room, pots[0].mask)])
     # The room's enemies are not counted: that takes the other box
     assert window.drops_left(room) == pots[1:]
+    # What was read is that game's. A map of another seed, as from a tracker file opened, has none of it
+    window.seed_hash = "another seed"
+    assert window.drops_left(room) == []
+
+
+def test_a_compass_alone_puts_the_seeds_boss_in_a_boss_room_already_on_the_map(window, app, monkeypatch):
+    window.set_option("compass_reveals", True)
+    tile, door = door_facing("No")
+    here = (tile, door["x"], door["y"])
+    eastern = window.pages["Eastern_Palace"].model
+    boss_room = (8, 12)
+    eastern.add_tile(boss_room, has_been_lit=True)
+    eastern.set_boss(boss_room, "Mothula")  # the player's guess, and wrong
+    mapped = set(eastern.tiles)
+    compasses_at, compass = COMPASSES_AT["Eastern_Palace"]
+    play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], equipment={compasses_at: compass}, rom=a_rom(VANILLA, default_one_way_connections))
+
+    assert eastern.bosses == {boss_room: "Armos Knights"}
+    # The rooms are as the player mapped them: that takes the map
+    assert set(eastern.tiles) == mapped and not eastern.revealed
 
 
 def test_a_dungeons_map_reveals_its_rooms_and_its_compass_its_boss(window, app, monkeypatch):
