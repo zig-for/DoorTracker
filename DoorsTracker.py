@@ -6,14 +6,14 @@ import math
 import signal
 import sys
 import traceback
-from collections.abc import Mapping
+from collections.abc import Container, Mapping
 from pathlib import Path
 from typing import Any
 
 import yaml
 from PIL import Image
 from PySide6.QtCore import QByteArray, QSize, QStandardPaths, Qt, QTimer
-from PySide6.QtGui import QAction, QIcon, QKeySequence
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -37,6 +37,7 @@ from data.vanilla_data import vanilla_layout_optimized
 from data.worlds_data import World, dungeon_worlds
 from gui import files
 from gui.Doors import rooms, seed_map
+from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import checks
 from gui.Doors.layout import REPEL_RANGE
 from gui.Doors.logic import items_held, small_keys
@@ -119,30 +120,84 @@ def autosave_name(seed_hash: str | None) -> str:
     return f"autosave-{seed_hash}.yaml" if seed_hash else "autosave.yaml"
 
 
-class IconPicker(QDialog):
-    """The annotation and lobby icons, laid out as they are on the icon sheet."""
+class Picker(QDialog):
+    """A dialog of buttons, each named for what it picks: choice is the name of the one clicked."""
 
-    def __init__(self, parent, assets, world):
+    def __init__(self, parent, title):
         super().__init__(parent)
-        self.setWindowTitle("Annotate door")
+        self.setWindowTitle(title)
         self.choice = None
-        grid = QGridLayout(self)
-        grid.setSpacing(2)
-        for name, (row, column) in sprites.all_icons.items():
-            button = QToolButton()
-            button.setIcon(QIcon(assets.icon(name).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))
-            button.setIconSize(QSize(32, 32))
-            button.setToolTip(name.replace("_", " "))
-            usable = (name in sprites.item_table or name in sprites.dungeon_lobbies[world]) and name != "Sanctuary_Mirror"
-            button.setEnabled(usable)
-            # Signals go to methods, never lambdas: Qt keeps a lambda that holds a widget alive, and the widget with it
-            button.setObjectName(name)
-            button.clicked.connect(self._pick)
-            grid.addWidget(button, row, column)
 
     def _pick(self):
         self.choice = self.sender().objectName()
         self.accept()
+
+
+class IconPicker(Picker):
+    """The icons to put on a door: rows of marks, items and equipment, then the ways in. Those are this dungeon's
+    entrances, in the same four places for every dungeon, and a place the player can get to."""
+
+    # The marks; the items, with the two keys; the equipment. The sheet's slash mark is not here: it is the first sword
+    ROWS = (
+        ("Bomb Door", "Dash Door", "Trap Door", "Skull", "Checkmark", "Crossmark", "Peg Switch", "Blue Peg", "Orange Peg", "Drop"),
+        ("Bow", "Blue Boomerang", "Red Boomerang", "Hookshot", "Bombs", "Mushroom", "Magic Powder", "Fire Rod", "Ice Rod", "Lamp"),
+        ("Bombos", "Ether", "Quake", "Hammer", "Shovel", "Ocarina", "Bug Catching Net", "Book of Mudora", "Bottle", "Magic Mirror"),
+        ("Cane of Somaria", "Cane of Byrna", "Cape", "Pegasus Boots", "Power Glove", "Titans Mitts", "Flippers", "Moon Pearl", "Key Door", "Big Key Door"),
+        ("Fighter Sword", "Master Sword", "Tempered Sword", "Golden Sword", "Blue Shield", "Red Shield", "Mirror Shield", "Green Mail", "Blue Mail", "Red Mail"),
+    )
+    ENTRANCES = 4  # the most a dungeon has
+
+    def __init__(self, parent, assets, world, taken):
+        """taken: the entrances the map already has, which are greyed out."""
+        super().__init__(parent, "Annotate door")
+        grid = QGridLayout(self)
+        grid.setSpacing(2)
+        for row, names in enumerate(self.ROWS):
+            for column, name in enumerate(names):
+                grid.addWidget(self._button(name, assets, False), row, column)
+        grid.setRowMinimumHeight(len(self.ROWS), 8)  # a gap above the ways in
+        for column, name in enumerate(sprites.dungeon_lobbies[world]):
+            grid.addWidget(self._button(name, assets, name in taken), len(self.ROWS) + 1, column)
+        grid.addWidget(self._button(sprites.REACHABLE, assets, False), len(self.ROWS) + 1, self.ENTRANCES)
+        grid.addWidget(self._button(sprites.CHICKEN, assets, False), len(self.ROWS) + 1, len(self.ROWS[0]) - 1)
+
+    def _button(self, name, assets, taken):
+        button = QToolButton()
+        picture = assets.icon(name).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+        icon = QIcon(picture)
+        if taken:
+            # Dark, where Qt's own greying of a button that cannot be pressed is pale
+            painter = QPainter(picture)
+            painter.fillRect(picture.rect(), QColor(0, 0, 0, 190))
+            painter.end()
+            icon.addPixmap(picture, QIcon.Mode.Disabled)
+        button.setIcon(icon)
+        button.setIconSize(QSize(32, 32))
+        button.setToolTip(name.replace("_", " "))
+        button.setEnabled(not taken)
+        # Signals go to methods, never lambdas: Qt keeps a lambda that holds a widget alive, and the widget with it
+        button.setObjectName(name)
+        button.clicked.connect(self._pick)
+        return button
+
+
+class BossPicker(Picker):
+    """The bosses a boss room can have, to pick the one it has."""
+
+    ACROSS = 5
+
+    def __init__(self, parent, assets):
+        super().__init__(parent, "Boss")
+        grid = QGridLayout(self)
+        grid.setSpacing(2)
+        for place, boss in enumerate(BOSSES):
+            button = QToolButton()
+            button.setIcon(QIcon(assets.boss(boss).scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))
+            button.setIconSize(QSize(64, 64))
+            button.setToolTip(boss)
+            button.setObjectName(boss)
+            button.clicked.connect(self._pick)
+            grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
 
 
 class EgPicker(QDialog):
@@ -351,7 +406,7 @@ class MainWindow(QMainWindow):
         links = seed.links(self.settings["decoupled_doors"])
         for page in self.pages.values():
             mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[page.tab_world]}
-            page.show_seed(links, mine)
+            page.show_seed(links, mine, seed.bosses)
 
     def _option_toggled(self, checked: bool) -> None:
         """A menu option or a toolbar box, named after its setting, was toggled."""
@@ -754,8 +809,13 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ pickers
 
-    def pick_icon(self, world: World) -> str | None:
-        dialog = IconPicker(self, self.assets, world)
+    def pick_icon(self, world: World, taken: Container[str]) -> str | None:
+        """taken: the entrances the map already has."""
+        dialog = IconPicker(self, self.assets, world, taken)
+        return dialog.choice if dialog.exec() else None
+
+    def pick_boss(self) -> str | None:
+        dialog = BossPicker(self, self.assets)
         return dialog.choice if dialog.exec() else None
 
     def pick_eg_tile(self, page: GraphPage) -> rooms.Tile | None:

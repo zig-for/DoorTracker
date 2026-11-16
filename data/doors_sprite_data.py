@@ -2,6 +2,7 @@ from pathlib import Path
 from data.worlds_data import World
 
 ITEM_SHEET_PATH = Path(__file__).parent / "Doors_Sheet.png"
+POT_PATH = Path(__file__).parent / "Pot.png"  # a pot on its stand, cut from the map's picture
 
 
 item_table = {
@@ -89,3 +90,10 @@ dungeon_lobbies = {
 # Flatten the dictionary
 all_dungeon_lobbies = {k: v for d in dungeon_lobbies.values() for k, v in d.items()}
 all_icons = {**item_table, **all_dungeon_lobbies}
+
+# A way in that is no entrance: somewhere the player can get to that the map does not lead to yet. It is drawn as
+# a question mark, which is not on the sheet
+REACHABLE = "Reachable"
+
+# A mark that is no item, with the randomizer's picture of it
+CHICKEN = "Chicken"

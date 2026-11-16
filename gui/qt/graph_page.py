@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QGraphicsLineItem,
     QGraphicsPathItem,
     QGraphicsPolygonItem,
-    QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
@@ -43,9 +42,10 @@ from PySide6.QtWidgets import (
 )
 
 from data.doors_data import mandatory_tiles
-from data.doors_sprite_data import ITEM_SHEET_PATH
+from data.doors_sprite_data import ITEM_SHEET_PATH, POT_PATH
 from data.room_bounds import room_bounds
 from data.worlds_data import World
+from gui.Doors import bosses
 from gui.Doors.graph_model import LOBBY_REACH, THUMB, Edge, GraphModel, TileState
 from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
@@ -61,7 +61,7 @@ from gui.Doors.rooms import (
     entrance_only,
     supertile,
 )
-from gui.qt.items_panel import ItemsPanel
+from gui.qt.items_panel import BIG_KEY_PICTURE, ITEMS, PICTURE_NAMES, ItemsPanel, picture
 from gui.qt.style import (
     BACKGROUND,
     CHECK_COLLECTED,
@@ -81,7 +81,7 @@ from gui.qt.style import (
 if TYPE_CHECKING:
     from DoorsTracker import MainWindow
 
-MIN_ZOOM, MAX_ZOOM = 0.1, 4.0
+MIN_ZOOM, MAX_ZOOM = 0.1, 8.0
 # Settings that are attributes of the model: setting -> attribute
 MODEL_OPTIONS = {
     "show_all_doors": "show_all_doors",
@@ -92,6 +92,10 @@ MODEL_OPTIONS = {
 }
 WORLD = 1_000_000  # scene half-extent
 CHECK_SIZE = 9.0  # side of a check's square, world units
+CHECK_EDGE = 1.5  # how much of the square shows round a picture in it
+POT_EDGE = 2.0  # and round a pot
+KEY_PICTURES = {"enemy": "Small Key", "big key": BIG_KEY_PICTURE}  # a dropped key's kind -> the randomizer's picture
+BOSS_SIZE = 12.0  # side of a boss room's boss
 # A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
 # shifts by less than this on every solver step, which would otherwise redraw everything
 STILL = 0.1
@@ -104,8 +108,9 @@ class Hit:
     node: Node | None = None  # a room card
     door: str | None = None  # a door dot
     icon: str | None = None  # an icon, by the door it is on
-    edge: Edge | None = None  # a line between doors, or the seam of a joined link
+    edge: Edge | None = None  # a line between doors
     check: str | None = None  # a check's square, with the node it is on
+    boss: Tile | None = None  # a boss room's boss, with the node it is on
 
 
 @dataclass
@@ -118,6 +123,53 @@ class Press:
     moved: bool = False
 
 
+def question_mark() -> QPixmap:
+    """An icon the sheet does not have, the size of one that it does."""
+    picture = QPixmap(16, 16)
+    picture.fill(QColor("white"))
+    painter = QPainter(picture)
+    font = QFont()
+    font.setPixelSize(14)
+    font.setBold(True)
+    # Hard edges, like the sheet's icons: it is pixel art too
+    font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+    painter.setFont(font)
+    painter.setPen(QColor("#111"))
+    painter.drawText(picture.rect(), Qt.AlignmentFlag.AlignCenter, "?")
+    painter.end()
+    return picture
+
+
+_enlarged: dict[tuple[int, int], QPixmap] = {}  # (a picture's cache key, how many times) -> it enlarged, hard edged
+
+
+def draw_pixel_art(painter: QPainter, target: QRectF, picture: QPixmap) -> None:
+    """Draw a small picture so that its pixels stay square and keep still at any zoom.
+
+    Scaled smoothly all the way it blurs, and scaled with hard edges its pixels come out uneven widths that
+    shift as the view zooms. So it is enlarged with hard edges by the whole number of times that fits, once for
+    each such number, and the painter smooths only what is left, which is less than double.
+    """
+    drawn = target.width() * painter.worldTransform().m11() * painter.device().devicePixelRatioF()
+    times = max(1, int(drawn / picture.width()))
+    key = (picture.cacheKey(), times)
+    if key not in _enlarged:
+        _enlarged[key] = picture.scaled(picture.width() * times, picture.height() * times, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+    painter.drawPixmap(target, _enlarged[key], QRectF(_enlarged[key].rect()))
+
+
+def item_icon(item: str) -> QPixmap:
+    """An item's picture as an icon like the sheet's: at half size, the size the game draws it, on black."""
+    whole = picture(PICTURE_NAMES.get(item, item))
+    half = whole.scaled(whole.width() // 2, whole.height() // 2, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+    icon = QPixmap(16, 16)
+    icon.fill(QColor("black"))
+    painter = QPainter(icon)
+    painter.drawPixmap((16 - half.width()) // 2, (16 - half.height()) // 2, half)
+    painter.end()
+    return icon
+
+
 class Assets:
     """Pixmaps shared by all tabs: supertile pictures at several sizes, and the icon sheet."""
 
@@ -127,6 +179,9 @@ class Assets:
         self._thumbnails: dict[tuple[Tile, int], QPixmap] = {}
         self._sheet: QPixmap | None = None
         self._icons: dict[str, QPixmap] = {}
+        self._pot: QPixmap | None = None
+        self._boss_sheet: QPixmap | None = None
+        self._bosses: dict[str, QPixmap] = {}
 
     def thumbnail(self, tile: Tile, size: int) -> QPixmap:
         """Supertile picture at an exact size, for the supertile picker."""
@@ -177,16 +232,34 @@ class Assets:
                 return levels[size]
         return levels[512]
 
+    def pot(self) -> QPixmap:
+        if self._pot is None:
+            self._pot = QPixmap(str(POT_PATH))
+        return self._pot
+
+    def boss(self, name: str) -> QPixmap:
+        """A boss's icon, cut from the sheet of them."""
+        if name not in self._bosses:
+            if self._boss_sheet is None:
+                self._boss_sheet = QPixmap(str(bosses.SHEET_PATH))
+            self._bosses[name] = self._boss_sheet.copy(bosses.BOSSES.index(name) * bosses.ICON, 0, bosses.ICON, bosses.ICON)
+        return self._bosses[name]
+
     def icon(self, name: str) -> QPixmap | None:
         import data.doors_sprite_data as sprites
 
         if name not in self._icons:
-            if name not in sprites.all_icons:
+            if name == sprites.REACHABLE:
+                self._icons[name] = question_mark()
+            elif name in ITEMS or name == sprites.CHICKEN:
+                self._icons[name] = item_icon(name)
+            elif name in sprites.all_icons:
+                if self._sheet is None:
+                    self._sheet = QPixmap(str(ITEM_SHEET_PATH))
+                row, column = sprites.all_icons[name]
+                self._icons[name] = self._sheet.copy(column * 16, row * 16, 16, 16)
+            else:
                 return None
-            if self._sheet is None:
-                self._sheet = QPixmap(str(ITEM_SHEET_PATH))
-            row, column = sprites.all_icons[name]
-            self._icons[name] = self._sheet.copy(column * 16, row * 16, 16, 16)
         return self._icons[name]
 
 
@@ -431,6 +504,7 @@ class DoorsItem(QGraphicsItem):
         self.w, self.h = (page.model.size(node) if node in page.model.compact else (THUMB, THUMB))
         self.dots = page.model.door_dots(node)
         self.checks = page.model.check_spots(node) if page.top.settings["show_checks"] else []
+        self.bosses = page.model.boss_spots(node)
         self.setZValue(3)
         # Hit shape is the dots only
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -451,6 +525,37 @@ class DoorsItem(QGraphicsItem):
             painter.setPen(QPen(QColor(style.outline), 1.5))
             painter.setBrush(QColor(style.fill))
             painter.drawRect(QRectF(check.x - half, check.y - half, CHECK_SIZE, CHECK_SIZE))
+            # A key in a pot has a pot in its square, and one an enemy drops a key: fainter once collected. The
+            # square's colour shows through around them
+            shown = page.assets.pot() if check.kind == "pot" else picture(KEY_PICTURES[check.kind]) if check.kind in KEY_PICTURES else None
+            if shown is not None:
+                # As big as fits inside the square's edge, in the picture's own shape. A pot is on its stand, which
+                # hides the square behind it, so it is given more edge
+                tall = CHECK_SIZE - 2 * (POT_EDGE if check.kind == "pot" else CHECK_EDGE)
+                wide = tall * shown.width() / shown.height()
+                painter.setOpacity(0.35 if check.name in page.top.collected else 1.0)
+                draw_pixel_art(painter, QRectF(check.x - wide / 2, check.y - tall / 2, wide, tall), shown)
+                painter.setOpacity(1.0)
+        # A boss room's boss. Until the player has picked it, a skull with a question mark on the corner
+        half = BOSS_SIZE / 2
+        for boss in self.bosses:
+            box = QRectF(boss.x - half, boss.y - half, BOSS_SIZE, BOSS_SIZE)
+            shown = page.assets.boss(boss.boss) if boss.boss else page.assets.icon("Skull")
+            assert shown is not None  # the sheet has a skull
+            draw_pixel_art(painter, box, shown)
+            painter.setPen(QPen(QColor("#111"), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(box)
+            if not boss.boss:
+                corner = QRectF(box.right() - 6, box.top(), 6, 7)
+                font = QFont()
+                font.setPixelSize(7)
+                font.setBold(True)
+                painter.setFont(font)
+                # White on a black edge, to read over the skull
+                for dx, dy, colour in ((0.5, 0.5, "black"), (-0.5, -0.5, "black"), (0.5, -0.5, "black"), (-0.5, 0.5, "black"), (0, 0, "white")):
+                    painter.setPen(QColor(colour))
+                    painter.drawText(corner.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, "?")
         for dot in self.dots:
             style = DOOR_STYLES[dot.state]
             fill, radius, outline = style.fill, DOOR_RADIUS * style.scale, style.outline
@@ -468,18 +573,6 @@ class DoorsItem(QGraphicsItem):
             painter.setPen(QPen(QColor(PLAYER), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawLine(QPointF(x - 7, y - 7), QPointF(x + 7, y + 7))
             painter.drawLine(QPointF(x + 7, y - 7), QPointF(x - 7, y + 7))
-
-
-class SeamItem(QGraphicsRectItem):
-    """Bar across the doorway of two joined rooms."""
-
-    def __init__(self, parent: QGraphicsItem, x: float, y: float, vertical: bool, edge: Edge):
-        long_side, short_side = 11.0, 5.0
-        hw, hh = (long_side, short_side) if vertical else (short_side, long_side)
-        super().__init__(QRectF(x - hw, y - hh, hw * 2, hh * 2), parent)
-        self.hit = Hit(edge=edge)
-        self.setPen(QPen(QColor("#111"), 2))
-        self.setBrush(QColor("#fffbe0"))
 
 
 class IconItem(QGraphicsItem):
@@ -533,9 +626,7 @@ class IconItem(QGraphicsItem):
             painter.setPen(QColor("white"))
             painter.drawText(box, Qt.AlignmentFlag.AlignCenter, "?")
         elif self.icon is not None:
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-            painter.drawPixmap(QRectF(self.spot.x() - 8, self.spot.y() - 8, 16, 16), self.icon, QRectF(0, 0, 16, 16))
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            draw_pixel_art(painter, QRectF(self.spot.x() - 8, self.spot.y() - 8, 16, 16), self.icon)
         if self.lobby:
             lod = option.levelOfDetailFromTransform(painter.worldTransform())
             if lod * 10 >= 5:
@@ -586,6 +677,7 @@ class LinkItem(QGraphicsPathItem):
         self.facing_a = door_vector(a) if not model.is_hidden_dark(self.node_a.tile) else None
         self.facing_b = door_vector(b) if not model.is_hidden_dark(self.node_b.tile) else None
         self.same_block = model.blocks.root.get(self.node_a) == model.blocks.root.get(self.node_b)
+        self.joined = edge.link in model.blocks.joined
         way = one_way(model, edge)
         self.one_way = way is not None
         self.backwards = way == (b, a)  # the arrow's head is at a
@@ -623,8 +715,9 @@ class LinkItem(QGraphicsPathItem):
         c2 = QPointF(bx + db[0] * reach, by + db[1] * reach) if db else None
         end = QPointF(bx, by)
         if c1 is not None and c2 is not None:
-            if self.same_block and not self.interior and dist > 1:
-                # Same block: the plain curve would be a straight line, so bow it sideways
+            if self.same_block and not self.interior and not self.joined and dist > 1:
+                # Same block: the plain curve would be a straight line, so bow it sideways. Not across a joined
+                # doorway, where the two doors meet
                 px, py = -(by - ay) / dist, (bx - ax) / dist
                 if py < 0 or (py == 0 and px < 0):
                     px, py = -px, -py
@@ -984,20 +1077,12 @@ class GraphPage(QWidget):
 
         colours = dict(zip(model.door_links, link_colours(len(model.door_links))))
         for edge in model.edges():
-            if edge.link in model.blocks.joined:
-                # Joined: a seam across the doorway instead of a line
-                node = self.model.rooms.node(edge.a)
-                ax, ay = model.port(edge.a)
-                bx, by = model.port(edge.b)
-                cx, cy = model.pos[node]
-                # Joined doorways face north/south or east/west
-                vertical = door_vector(edge.a) in ((0, -1), (0, 1))
-                SeamItem(self._doors[node], (ax + bx) / 2 - cx, (ay + by) / 2 - cy, vertical, edge)
-                continue
             if edge.kind is EdgeKind.WARP:
                 colour = WARP_COLOUR
             elif edge.kind in (EdgeKind.DROP, EdgeKind.HOLE):
                 colour = DROP_COLOUR
+            elif edge.link in model.blocks.joined:
+                colour = "white"
             elif edge.link is not None:
                 colour = colours[edge.link]
             else:
@@ -1140,6 +1225,9 @@ class GraphPage(QWidget):
             for check in self._doors[hit.node].checks:
                 if abs(scene_pos.x() - x - check.x) <= reach and abs(scene_pos.y() - y - check.y) <= reach:
                     return Hit(node=hit.node, check=check.name)
+            for boss in self._doors[hit.node].bosses:
+                if abs(scene_pos.x() - x - boss.x) <= BOSS_SIZE / 2 and abs(scene_pos.y() - y - boss.y) <= BOSS_SIZE / 2:
+                    return Hit(node=hit.node, boss=boss.tile)
         return hit
 
     # ------------------------------------------------------------------- mouse
@@ -1213,6 +1301,12 @@ class GraphPage(QWidget):
         elif press.hit.check is not None:
             # A click collects and a right click takes it back, here as for the drops; see _context
             self.top.set_collected(press.hit.check, True)
+        elif press.hit.boss is not None:
+            # A click picks the room's boss and a right click takes that back; see _context
+            boss = self.top.pick_boss()
+            if boss:
+                self.model.set_boss(press.hit.boss, boss)
+                self.rebuild()
         elif press.hit.icon is not None and entrance_only(press.hit.icon):
             # A drop or the mirror route: the player can use it
             self.model.set_entrance_used(press.hit.icon, True)
@@ -1320,6 +1414,8 @@ class GraphPage(QWidget):
             node = hit.node
             if hit.check is not None:
                 text = hit.check + ("   (collected)" if hit.check in self.top.collected else "")
+            elif hit.boss is not None:
+                text = f"Boss: {model.bosses.get(hit.boss, '?   (click to pick)')}"
             elif model.is_hidden_dark(node.tile):
                 text = "Dark room"
             else:
@@ -1363,11 +1459,14 @@ class GraphPage(QWidget):
         model = self.model
         if hit.check is not None:
             self.top.set_collected(hit.check, False)
+        elif hit.boss is not None:
+            model.set_boss(hit.boss, None)
+            self.rebuild()
         elif hit.icon is not None and entrance_only(hit.icon):
             model.set_entrance_used(hit.icon, False)
             self.rebuild()
         elif hit.door is not None:
-            icon = self.top.pick_icon(self.tab_world)
+            icon = self.top.pick_icon(self.tab_world, {lobby.lobby for lobby in model.lobby_doors})
             if icon:
                 import data.doors_sprite_data as sprites
 
@@ -1513,9 +1612,9 @@ class GraphPage(QWidget):
         else:
             self.scene.update()
 
-    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str]) -> None:
+    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str], bosses: dict[Tile, str]) -> None:
         """A cheat: this tab's dungeon as the seed made it; see GraphModel.show_seed."""
-        self.model.show_seed(links, entrances)
+        self.model.show_seed(links, entrances, bosses)
         self._select(None)
         self._needs_fit = True
         self.rebuild()

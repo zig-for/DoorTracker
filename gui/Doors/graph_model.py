@@ -24,9 +24,11 @@ from data.doors_data import (
     regions_to_doors,
     simple_tiles,
 )
+from data.doors_sprite_data import REACHABLE
 from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
-from gui.Doors.checks import checks
+from gui.Doors.bosses import BOSS_ROOMS, beating
+from gui.Doors.checks import BIG_KEY_DROPS, checks
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, holds
 from gui.Doors.rules import check_regions, check_rules, crystals, events, passage_rules
@@ -129,6 +131,15 @@ class CheckSpot:
     name: str  # in gui/Doors/checks.py
     x: float  # relative to the node's centre, world units
     y: float
+    kind: str  # "pot" for a key in a pot, "enemy" for one an enemy drops, "big key" for a big key one drops
+
+
+@dataclass(frozen=True)
+class BossSpot:
+    tile: Tile  # the boss room
+    boss: str | None  # None until the player picks it
+    x: float  # relative to the node's centre, world units
+    y: float
 
 
 class CheckState(Enum):
@@ -208,6 +219,7 @@ class GraphModel:
         self.door_links: list[Link] = []
         self.lobby_doors: list[LobbyDoor] = []
         self.special_doors: dict[str, str] = {}  # door -> icon
+        self.bosses: dict[Tile, str] = {}  # boss room -> the boss the player picked for it
         self.kept_expanded: set[Node] = set()  # see toggle_expanded
         self.sanc_dungeon = False
 
@@ -234,7 +246,6 @@ class GraphModel:
         self.held: set[Node] = set()  # being dragged
         self._damping: dict[Node, layout.Damping] = {}
         self._last_step = 0.0
-        self._seam_doors: set[str] = set()
         self._linked_doors: set[str] = set()
         self._piece_cache: dict[Node, list[Box]] = {}
         # Solver inputs that only change when the blocks are rebuilt; see _build_blocks
@@ -279,10 +290,6 @@ class GraphModel:
         self._relax(iterations=iterations, old_mobility=1.0, springs=self._settle_springs, cold=True)
 
     def _refresh_door_sets(self) -> None:
-        self._seam_doors = set()
-        for link in self.blocks.joined:
-            self._seam_doors.add(link.door)
-            self._seam_doors.add(link.linked_door)
         self._linked_doors = set()
         for link in self.door_links:
             self._linked_doors.add(link.door)
@@ -495,11 +502,12 @@ class GraphModel:
         self.update()
         return True
 
-    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str]) -> None:
+    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str], bosses: dict[Tile, str]) -> None:
         """A cheat: this tab's dungeon as the seed made it, in place of the map that was there.
 
         links: the doors the seed joined, in every dungeon, as (door, the door it leads to).
         entrances: this dungeon's own, by name -> the door each comes in by.
+        bosses: every boss room's boss. The ones in this dungeon are picked for their rooms.
         What can be walked to from the entrances is this dungeon: the links there are kept, and every room is lit.
         """
         used = self.used_entrances
@@ -509,7 +517,8 @@ class GraphModel:
         for name, door in entrances.items():
             self.add_lobby_door(door, name)
         self.door_links = [Link(door, leads_to) for door, leads_to in links]
-        reached, _ = self._walk(self.lobby_door_names(), None)
+        # The ROM read says nothing of holes: they are taken to land where the original game's do
+        reached, _ = self._walk(self.lobby_door_names(), None, falls=True)
         self.door_links = [link for link in self.door_links if any(region in reached for region in regions_at(link.door))]
         self.special_doors.update(notes)
         self._sync_model()
@@ -519,6 +528,7 @@ class GraphModel:
                 self._ensure_tile(room.tile)
         for state in self.tiles.values():
             state.has_been_lit = True
+        self.bosses = {tile: boss for tile, boss in bosses.items() if tile in self.tiles}
         self.relayout()
         self._find_reach()
 
@@ -550,6 +560,7 @@ class GraphModel:
         self.lobby_doors = [x for x in self.lobby_doors if x.door not in doors]
         for door in doors:
             self.special_doors.pop(door, None)
+        self.bosses.pop(tile, None)
         del self.tiles[tile]
         for node in [n for n in self.pos if n.tile == tile]:
             del self.pos[node]
@@ -565,8 +576,10 @@ class GraphModel:
         return True
 
     def annotate(self, door: str, icon: str, lobbies: Container[str]) -> None:
-        """Put an icon on a door. Lobby icons also make the door an entrance."""
-        if icon in lobbies or icon == "Drop":
+        """Put an icon on a door. Lobby icons also make the door an entrance, as do a drop and a place the player
+        can get to. It takes the place of what the door had: an entrance is switched for another, or for an icon."""
+        self.lobby_doors = [x for x in self.lobby_doors if x.door != door]
+        if icon in lobbies or icon in ("Drop", REACHABLE):
             self.add_lobby_door(door, icon)
             if "Drop" in door:
                 self.special_doors[door] = "Drop"
@@ -634,6 +647,10 @@ class GraphModel:
                 self._join_rank[self.door_links[n]] = rank
         self.lobby_doors = [LobbyDoor(x["door"], x["lobby"]) for x in data.get("lobby_doors", [])]
         self.special_doors = dict(data.get("special_doors", {}))
+        self.bosses = {}
+        for key, boss in (data.get("bosses") or {}).items():
+            column, row = str(key).split("__")
+            self.bosses[(int(column), int(row))] = boss
         self.used_entrances = set(data.get("used_entrances") or [])
         self.tiles = {}
         self.pos = {}
@@ -715,6 +732,7 @@ class GraphModel:
                 if n.tile in self.tiles and self.real_rooms.part_count(n.tile) > 1
             ),
             "special_doors": dict(self.special_doors),
+            "bosses": {f"{x}__{y}": boss for (x, y), boss in self.bosses.items()},
             "used_entrances": sorted(self.used_entrances),
             "expanded": sorted(f"{n.x}__{n.y}__{n.part}" for n in self.kept_expanded),
             "graph_layout": {
@@ -853,11 +871,13 @@ class GraphModel:
                 drain()
         return seen
 
-    def _leads(self) -> dict[str, list[str]]:
-        """Door or passage -> the doors and regions it comes out at, each only the way it goes."""
+    def _leads(self, falls: bool) -> dict[str, list[str]]:
+        """Door or passage -> the doors and regions it comes out at, each only the way it goes.
+
+        falls: whether a hole lands where it does in the original game.
+        """
         leads = defaultdict(list)
-        # Where a hole lands in the original game is only where it lands here if the option says so
-        moved = set() if self.experimental_flags.get("vanilla_drops") else HOLES
+        moved = set() if falls else HOLES
         for a, b in DEFAULT_DOORS.items():
             if a not in moved:
                 leads[a].append(b)
@@ -873,23 +893,28 @@ class GraphModel:
                     leads[a].append(b)
         return leads
 
-    def _walk(self, starts: list[str], items: frozenset[str] | None) -> tuple[dict[str, int], frozenset[str]]:
+    def _walk(self, starts: list[str], items: frozenset[str] | None, falls: bool | None = None) -> tuple[dict[str, int], frozenset[str]]:
         """Walk from some doors as the randomizer does, going through each door and passage only the way it goes.
 
         Returns the regions reached, each with the crystal barriers that can be down on getting there (BLUE,
         ORANGE, or EITHER for both), and what the player holds by the end: their items, and what gets done on the
         way, like draining the swamp.
 
-        A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met.
-        What is reached stays reached. A rule can ask for something done or for a region reached, so whenever
-        there is more of either, every way out is tried again.
+        A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met,
+        and, out of a boss room whose boss the player has picked, when that boss can be beaten.
+        What is reached stays reached. A rule can ask for a region reached, so every way out is tried again until
+        no more is reached. Only then is what got done on the way counted, and every way out tried again: a rule
+        can ask for something not done, and is asked before it is.
 
         items: what the player holds. None for no rules and no barriers.
+        falls: whether a hole lands where it does in the original game. None for what the option says.
         """
-        leads = self._leads()
+        leads = self._leads(bool(self.experimental_flags.get("vanilla_drops")) if falls is None else falls)
         reached: dict[str, int] = {}
         held = items or frozenset()
         queue: deque[str] = deque()
+        # Way out of a boss room -> what going past the boss picked for the room takes
+        beaten = {way: beating(tile, boss, self.dungeon_name) for tile, boss in self.bosses.items() if tile in BOSS_ROOMS for way in BOSS_ROOMS[tile].ways}
 
         def arrive(name: str, down: int) -> None:
             for region in regions_at(name):
@@ -900,7 +925,7 @@ class GraphModel:
         for start in starts:
             # A dungeon is entered with the orange barriers down
             arrive(start, EITHER if items is None else ORANGE)
-        tried = None  # how much was reached and held when every way out was last tried again
+        tried = None  # how much was reached when every way out was last tried again; it only ever grows
         while True:
             while queue:
                 region = queue.popleft()
@@ -909,16 +934,18 @@ class GraphModel:
                     # A way through a barrier takes its colour down, and leaves it down. The way back from hitting
                     # a crystal switch leaves whichever the player likes
                     barrier = crystals.get(way_out, 0)
-                    if items is None or ((not barrier or down & barrier) and holds(passage_rules.get(way_out, True), held, reached)):
+                    rules = (passage_rules.get(way_out, True), beaten.get(way_out, True))
+                    if items is None or ((not barrier or down & barrier) and all(holds(rule, held, reached) for rule in rules)):
                         for target in leads.get(way_out, ()):
                             arrive(target, barrier or down)
             if items is None:
                 break
-            held |= {event for event, (region, rule) in events.items() if region in reached and holds(rule, held, reached)}
-            # Both only ever grow, so these numbers are the same only when nothing has changed
-            now = (len(reached), sum(reached.values()), len(held))
+            now = (len(reached), sum(reached.values()))
             if now == tried:
-                break
+                done = {event for event, (region, rule) in events.items() if region in reached and holds(rule, held, reached)}
+                if done <= held:
+                    break
+                held |= done
             tried = now
             queue.extend(reached)
         return reached, held
@@ -1027,7 +1054,13 @@ class GraphModel:
             return (0, 0)
         if "Drop" in door:
             return (0, -1)
-        return door_vector(door) or (0, 1)
+        facing = door_vector(door)
+        if facing is not None:
+            return facing
+        # Stairs face no way on the map: off the side of the room they are nearest
+        x, y = self.port_offset(door)
+        left, top, right, bottom = self.box(self.rooms.node(door))
+        return min((x - left, (-1, 0)), (right - x, (1, 0)), (y - top, (0, -1)), (bottom - y, (0, 1)))[1]
 
     def marker_boxes(self, node: Node) -> list[Box]:
         """Where the entrances on a node have their markers, stems and names, relative to the supertile centre.
@@ -1553,7 +1586,7 @@ class GraphModel:
         for door in self.rooms.doors(node):
             if entrance_only(door):
                 continue
-            if door in self._seam_doors or not self._door_visible(door):
+            if not self._door_visible(door):
                 continue
             interior = door in INTERIOR_DOORS
             if interior and node in self.compact:
@@ -1563,6 +1596,21 @@ class GraphModel:
             state = DoorState.INTERIOR if interior else DoorState.LINKED if linked else DoorState.OPEN
             dots.append(DoorDot(door, ox, oy, state))
         return dots
+
+    def boss_spots(self, node: Node) -> list[BossSpot]:
+        """The boss drawn on a node, if it has a boss room. None on a pill, or on a dark room not yet seen lit."""
+        if node.tile not in BOSS_ROOMS or node in self.compact or self.is_hidden_dark(node.tile):
+            return []
+        room = BOSS_ROOMS[node.tile]
+        return [BossSpot(node.tile, self.bosses.get(node.tile), (room.x / 512 - 0.5) * THUMB, (room.y / 512 - 0.5) * THUMB)]
+
+    def set_boss(self, tile: Tile, boss: str | None) -> None:
+        """Say which boss a boss room has. None for not known: it counts as beaten."""
+        if boss is None:
+            self.bosses.pop(tile, None)
+        else:
+            self.bosses[tile] = boss
+        self._find_reach()
 
     def check_spots(self, node: Node) -> list[CheckSpot]:
         """The checks drawn on a node. None on a pill, or on a dark room not yet seen lit."""
@@ -1574,7 +1622,8 @@ class GraphModel:
             check = checks[name]
             # A split supertile's checks each go on the part they are in
             if not split or self._check_node(name) == node:
-                spots.append(CheckSpot(name, (check["x"] / 512 - 0.5) * THUMB, (check["y"] / 512 - 0.5) * THUMB))
+                kind = "big key" if name in BIG_KEY_DROPS else check["flags"][0][0]
+                spots.append(CheckSpot(name, (check["x"] / 512 - 0.5) * THUMB, (check["y"] / 512 - 0.5) * THUMB, kind))
         return spots
 
     def _check_node(self, name: str) -> Node:

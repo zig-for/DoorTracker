@@ -4,6 +4,7 @@ import copy
 
 from data.doors_data import dark_tiles, default_one_way_connections, dungeon_lobbies
 from gui.Doors import seed_map
+from gui.Doors.bosses import BOSS_ROOMS
 from gui.Doors.randomizer import doors_and_portals
 from gui.Doors.rooms import DOORS, INTERIOR_DOORS, SPLIT, SUPERTILES, supertile
 from support import VANILLA, a_rom, grow, joined_doors, new_model, next_link, open_doors, positions
@@ -33,11 +34,11 @@ def test_rooms_linked_through_facing_doorways_are_joined():
     a, b = model.rooms.node(door), model.rooms.node(other)
     assert link in model.blocks.joined
     assert model.blocks.root[a] == model.blocks.root[b]
-    # The two doorways meet, and are drawn as a seam instead of two dots
+    # The two doorways meet, and each keeps its dot
     ax, ay = model.port(door)
     bx, by = model.port(other)
     assert abs(ax - bx) + abs(ay - by) < 40
-    assert door not in {dot.door for dot in model.door_dots(a)}
+    assert door in {dot.door for dot in model.door_dots(a)}
 
 
 def test_stairs_link_rooms_without_joining_them():
@@ -93,6 +94,7 @@ def decorated_map():
     model.set_pinned(model.rooms.node(model.door_links[3].door), True)
     spare = [d for tile in model.tiles for d in open_doors(model, tile)]
     model.annotate(spare[0], "Bow", [])
+    model.set_boss((4, 10), "Mothula")
     model.auto_add_lobby(next(d for d in spare[1:] if DOORS[d].facing == "So"))
 
     # Still contested: the default order would join different links
@@ -109,6 +111,7 @@ def contents(model):
         "joined": joined_doors(model),
         "lobbies": [(lobby.door, lobby.lobby) for lobby in model.lobby_doors],
         "icons": model.special_doors,
+        "bosses": model.bosses,
         "pinned": model.fixed,
         "lit": {tile: state.has_been_lit for tile, state in model.tiles.items()},
         "positions": {node: (round(x, 1), round(y, 1)) for node, (x, y) in model.pos.items()},
@@ -159,6 +162,27 @@ def test_a_file_naming_doors_this_version_does_not_know_still_loads():
     assert joined_doors(again) == joined_doors(model)
     assert all("No Such Door" not in edge.a + edge.b for edge in again.edges())
     assert again.save()["door_links"] == saved["door_links"]
+
+
+def test_an_icon_put_on_an_entrance_takes_its_place():
+    model = new_model()
+    door = next(d for tile in model.tiles for d in open_doors(model, tile) if DOORS[d].facing == "So")
+    lobbies = list(dungeon_lobbies[model.tab_world])
+    for icon, entrances in ((lobbies[0], [(door, lobbies[0])]), (lobbies[1], [(door, lobbies[1])]), ("Bow", [])):
+        model.annotate(door, icon, lobbies)
+        assert [(lobby.door, lobby.lobby) for lobby in model.lobby_doors if lobby.door == door] == entrances
+        assert model.special_doors[door] == icon
+
+
+def test_a_boss_room_shows_the_boss_picked_for_it():
+    model = new_model("Eastern_Palace")
+    tile = (8, 12)
+    model.add_tile(tile, has_been_lit=True)
+    (node,) = [n for n in model.nodes() if n.tile == tile and model.boss_spots(n)]
+    for picked in (None, "Mothula", None):
+        model.set_boss(tile, picked)
+        (spot,) = model.boss_spots(node)
+        assert spot.boss == picked
 
 
 def test_removing_a_supertile_removes_everything_on_it():
@@ -236,7 +260,7 @@ def test_no_room_is_laid_out_on_an_entrances_marker():
     # Skull Woods as in the original game: the room south of the first lobby would join on under its entrance
     seed = seed_map.decode(a_rom(VANILLA, default_one_way_connections))
     model = new_model("Skull_Woods")
-    model.show_seed(seed.links(decoupled=False), {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]})
+    model.show_seed(seed.links(decoupled=False), {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]}, seed.bosses)
     assert any(model.marker_boxes(node) for node in model.nodes())
     for node in model.nodes():
         x, y = model.pos[node]
@@ -251,9 +275,16 @@ def test_a_seeds_links_and_entrances_are_read_back_from_its_rom():
     # Two of the original game's links, a west door to an east one and an east to a west, joined the other way
     (a, b), (c, d) = VANILLA[0], VANILLA[1]
     pairs = [(a, c), (b, d), *VANILLA[2:]]
-    seed = seed_map.decode(a_rom(pairs, default_one_way_connections))
+    # Three entrances moved: to a room's right door, to a left one, and to a middle one
+    moved = {"Eastern": "Eastern Hint Tile Blocked Path SE", "Skull 1": "Skull Star Pits SW", "Skull 3": "Eastern Darkness S"}
+    # Three boss rooms given other bosses: Eastern's, the Ice Palace's and Misery Mire's
+    seed = seed_map.decode(a_rom(pairs, default_one_way_connections, moved, bosses={0xC8: "Mothula", 0xDE: "Vitreous", 0x90: "Kholdstare"}))
     assert seed.leads == {**dict(pairs), **{y: x for x, y in pairs}, **dict(default_one_way_connections)}
-    assert seed.entrances == {portal.name: portal.door.name for portal in doors_and_portals()[1]}
+    assert seed.entrances == {portal.name: portal.door.name for portal in doors_and_portals()[1]} | moved
+    assert [seed.bosses[tile] for tile in ((8, 12), (14, 13), (0, 9))] == ["Mothula", "Vitreous", "Kholdstare"]
+    # The rest have their own, as Ganon's Tower's three do
+    assert [seed.bosses[tile] for tile in ((12, 1), (12, 6), (13, 4))] == ["Armos Knights", "Lanmolas", "Moldorm"]
+    assert set(seed.bosses) == set(BOSS_ROOMS)
     # Each pair once, and the ways into rooms with no way back
     assert len(seed.links(decoupled=False)) == len(pairs) + len(default_one_way_connections)
 
@@ -261,11 +292,13 @@ def test_a_seeds_links_and_entrances_are_read_back_from_its_rom():
 def test_the_cheat_gives_each_tab_its_own_dungeon_as_the_seed_made_it():
     seed = seed_map.decode(a_rom(VANILLA, default_one_way_connections))
     for tab in sorted({record.dungeon for record in SUPERTILES.values() if record.dungeon}):
-        model = new_model(tab)
+        # Rooms only fallen into are the dungeon's too, whatever the option says of where holes land
+        model = new_model(tab, vanilla_drops=False)
         model.add_tile(DOORS["Hera Lobby S"].tile, has_been_lit=True)  # what was on the map goes
         mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]}
-        model.show_seed(seed.links(decoupled=False), mine)
-        # With the doors as in the original game, that is the dungeon's own rooms, all lit
+        model.show_seed(seed.links(decoupled=False), mine, seed.bosses)
+        # With the doors as in the original game, that is the dungeon's own rooms, all lit, each boss room with its boss
         assert set(model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == tab}, tab
+        assert set(model.bosses) == set(model.tiles) & set(BOSS_ROOMS), tab
         assert not any(model.is_hidden_dark(tile) for tile in model.tiles)
         assert set(mine.values()) <= {lobby.door for lobby in model.lobby_doors}

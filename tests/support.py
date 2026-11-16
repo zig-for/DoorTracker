@@ -1,5 +1,7 @@
 """Helpers for building maps in tests. Maps are built from the door tables, not from tracker files."""
 
+import copy
+
 from data.doors_data import dark_tiles, default_door_connections, ladders, open_edges, spiral_staircases, straight_staircases
 from data.worlds_data import dungeon_worlds
 from gui.Doors import seed_map
@@ -7,25 +9,72 @@ from gui.Doors.graph_model import GraphModel
 from gui.Doors.randomizer import doors_and_portals
 from gui.Doors.rooms import DOORS, INTERIOR_DOORS, SPLIT, SUPERTILES, supertile
 
+# After gui.Doors, which makes the randomizer importable
+from ALttPDoorRandomizer.source.enemizer import Bossmizer  # noqa: E402
+from ALttPDoorRandomizer.source.rom.DataTables import get_uw_enemy_table  # noqa: E402
+
 OPPOSITE = {"No": "So", "So": "No", "Ea": "We", "We": "Ea"}
 # The pairs of doors joined both ways in the original game
 VANILLA = [*default_door_connections, *spiral_staircases, *straight_staircases, *open_edges, *ladders]
 
 
-def a_rom(pairs, one_way=()):
+class Image:
+    """Stands in for the randomizer's ROM, for its own code to write to."""
+
+    def __init__(self):
+        self.data = bytearray(0x200000)
+
+    def write_byte(self, at, value):
+        self.data[at] = value
+
+    def write_bytes(self, at, values):
+        self.data[at : at + len(values)] = bytes(values)
+
+
+def a_rom(pairs, one_way=(), moved=None, bosses=None):
     """What the tracker reads of a ROM whose doors are joined in these pairs: written as the randomizer's Rom.py
-    writes it, with every dungeon entrance at its own door."""
+    writes it. Every dungeon entrance is at its own door, but for those in moved: entrance -> the door it is at.
+    Every boss room has its own boss, but for those in bosses: room -> the boss the seed put there."""
     doors, portals = doors_and_portals()
     named = {door.name: door for door in doors}
-    image = bytearray(0x200000)
+    rom = Image()
+    image = rom.data
+
+    # Every room's sprites, written by the randomizer's own code, with a boss changed as its Bossmizer.py does it
+    sprites = get_uw_enemy_table()
+    for room, boss in (bosses or {}).items():
+        del sprites.room_map[room][: Bossmizer.boss_room_remove_data[room]]
+        Bossmizer.boss_addition_table[boss][0](sprites.room_map[room], room)
+    # The table of rooms is at 09:D62E in the game. Here the overworld's sprites are given as ending past that,
+    # which has the randomizer's writer move the table and say where: as in DataTables.py's pointer_addresses
+    table, ow_end = 0x09D62E, 0x09D72E
+    sprites.write_sprite_data_to_rom(rom, {"ow_sprites": [ow_end, 0], "uw_sprites": [0x09D92E, None, table, seed_map.SPRITE_TABLE_AT]})
+
     for a, b in [*pairs, *((b, a) for a, b in pairs), *one_way]:
         data = named[b].getTarget(named[a])
         image[named[a].getAddress() : named[a].getAddress() + len(data)] = bytes(data)
     for portal in portals:
+        if moved and portal.name in moved:
+            portal = copy.copy(portal)
+            portal.door = named[moved[portal.name]]
         image[seed_map.ENTRANCE_ROOMS + portal.ent_offset * 2] = portal.current_room()
         at = seed_map.ENTRANCE_SCROLLS + portal.ent_offset * 2
         image[at : at + 2] = bytes(portal.scroll_x())
-    return {name: bytes(image[address : address + size]) for name, (address, size) in seed_map.READS.items()}
+    # Read as the tracker reads it: what is read first says where some of the rest is
+    memory, reads = {}, seed_map.READS
+    while reads:
+        memory |= {name: bytes(image[address : address + size]) for name, (address, size) in reads.items()}
+        reads = seed_map.next_reads(memory)
+    return memory
+
+
+def rom_reads(memory):
+    """Where each part of a_rom's result was read from: name -> (address, length)."""
+    found, reads = {}, seed_map.READS
+    while reads:
+        found |= reads
+        reads = seed_map.next_reads({name: memory[name] for name in found})
+    return found
 
 
 def new_model(tab="Turtle_Rock", **flags):
