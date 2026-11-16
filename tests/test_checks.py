@@ -4,6 +4,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtTest import QTest
 
 from data.doors_data import regions_to_doors
+from data.doors_sprite_data import REACHABLE
 from gui.Doors.checks import checks
 from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState
 from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, ORANGE, READABLE, holds, items_held, with_hearts
@@ -128,6 +129,16 @@ def test_a_check_the_map_does_not_lead_to_is_unrouted():
     model.add_lobby_door("GT Validation WS", "Ganons_Tower")
     model.update()
     assert model.check_state(name) is CheckState.UNROUTED
+
+
+def test_a_door_marked_as_somewhere_the_player_can_get_to_is_a_way_in():
+    name = "Swamp Palace - Entrance"
+    model = new_model("Swamp_Palace")
+    model.add_tile(checks[name]["tile"], has_been_lit=True)
+    model.update()
+    assert model.check_state(name) is CheckState.UNROUTED
+    model.annotate(next(door for door in regions_to_doors[check_regions[name]] if door in DOORS), REACHABLE, [])
+    assert model.check_state(name) is CheckState.OPEN
 
 
 def test_a_check_the_map_does_not_lead_to_that_takes_an_item_not_held_is_both():

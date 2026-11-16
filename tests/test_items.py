@@ -3,8 +3,9 @@
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
+from DoorsTracker import IconPicker
 from gui.Doors.logic import BIG_KEYS, ITEMS_AT, ITEMS_LENGTH, READABLE, hearts_held, small_keys
-from gui.qt.items_panel import BIG_KEY_PICTURE, PICTURE_NAMES, PICTURES, SHORT_NAMES, SLOTS, clicked, picture
+from gui.qt.items_panel import BIG_KEY_PICTURE, ITEMS, PICTURE_NAMES, PICTURES, SHORT_NAMES, SLOTS, clicked, picture
 
 
 def test_every_item_read_has_a_place_and_a_picture():
@@ -14,6 +15,12 @@ def test_every_item_read_has_a_place_and_a_picture():
     pictures = [PICTURE_NAMES.get(item, item) for item in placed] + [slot.start for slot in SLOTS if slot.start] + [BIG_KEY_PICTURE]
     for name in pictures:
         assert (PICTURES / f"{name}.gif").exists(), name
+
+
+def test_every_item_can_be_put_on_a_door():
+    offered = [name for row in IconPicker.ROWS for name in row]
+    assert set(ITEMS) <= set(offered)
+    assert len(offered) == len(set(offered))
 
 
 def test_small_keys_for_the_dungeon_the_player_is_in_are_counted_apart():

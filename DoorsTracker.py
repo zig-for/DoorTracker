@@ -6,14 +6,14 @@ import math
 import signal
 import sys
 import traceback
-from collections.abc import Mapping
+from collections.abc import Container, Mapping
 from pathlib import Path
 from typing import Any
 
 import yaml
 from PIL import Image
 from PySide6.QtCore import QByteArray, QSize, QStandardPaths, Qt, QTimer
-from PySide6.QtGui import QAction, QIcon, QKeySequence
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -120,25 +120,52 @@ def autosave_name(seed_hash: str | None) -> str:
 
 
 class IconPicker(QDialog):
-    """The annotation and lobby icons, laid out as they are on the icon sheet."""
+    """The icons to put on a door: rows of marks, items and equipment, then the ways in. Those are this dungeon's
+    entrances, in the same four places for every dungeon, and a place the player can get to."""
 
-    def __init__(self, parent, assets, world):
+    # The marks; the items, with the two keys; the equipment. The sheet's slash mark is not here: it is the first sword
+    ROWS = (
+        ("Bomb Door", "Dash Door", "Trap Door", "Skull", "Checkmark", "Crossmark", "Peg Switch", "Blue Peg", "Orange Peg", "Drop"),
+        ("Bow", "Blue Boomerang", "Red Boomerang", "Hookshot", "Bombs", "Mushroom", "Magic Powder", "Fire Rod", "Ice Rod", "Lamp"),
+        ("Bombos", "Ether", "Quake", "Hammer", "Shovel", "Ocarina", "Bug Catching Net", "Book of Mudora", "Bottle", "Magic Mirror"),
+        ("Cane of Somaria", "Cane of Byrna", "Cape", "Pegasus Boots", "Power Glove", "Titans Mitts", "Flippers", "Moon Pearl", "Key Door", "Big Key Door"),
+        ("Fighter Sword", "Master Sword", "Tempered Sword", "Golden Sword", "Blue Shield", "Red Shield", "Mirror Shield", "Green Mail", "Blue Mail", "Red Mail"),
+    )
+    ENTRANCES = 4  # the most a dungeon has
+
+    def __init__(self, parent, assets, world, taken):
+        """taken: the entrances the map already has, which are greyed out."""
         super().__init__(parent)
         self.setWindowTitle("Annotate door")
         self.choice = None
         grid = QGridLayout(self)
         grid.setSpacing(2)
-        for name, (row, column) in sprites.all_icons.items():
-            button = QToolButton()
-            button.setIcon(QIcon(assets.icon(name).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))
-            button.setIconSize(QSize(32, 32))
-            button.setToolTip(name.replace("_", " "))
-            usable = (name in sprites.item_table or name in sprites.dungeon_lobbies[world]) and name != "Sanctuary_Mirror"
-            button.setEnabled(usable)
-            # Signals go to methods, never lambdas: Qt keeps a lambda that holds a widget alive, and the widget with it
-            button.setObjectName(name)
-            button.clicked.connect(self._pick)
-            grid.addWidget(button, row, column)
+        for row, names in enumerate(self.ROWS):
+            for column, name in enumerate(names):
+                grid.addWidget(self._button(name, assets, False), row, column)
+        grid.setRowMinimumHeight(len(self.ROWS), 8)  # a gap above the ways in
+        for column, name in enumerate(sprites.dungeon_lobbies[world]):
+            grid.addWidget(self._button(name, assets, name in taken), len(self.ROWS) + 1, column)
+        grid.addWidget(self._button(sprites.REACHABLE, assets, False), len(self.ROWS) + 1, self.ENTRANCES)
+
+    def _button(self, name, assets, taken):
+        button = QToolButton()
+        picture = assets.icon(name).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+        icon = QIcon(picture)
+        if taken:
+            # Dark, where Qt's own greying of a button that cannot be pressed is pale
+            painter = QPainter(picture)
+            painter.fillRect(picture.rect(), QColor(0, 0, 0, 190))
+            painter.end()
+            icon.addPixmap(picture, QIcon.Mode.Disabled)
+        button.setIcon(icon)
+        button.setIconSize(QSize(32, 32))
+        button.setToolTip(name.replace("_", " "))
+        button.setEnabled(not taken)
+        # Signals go to methods, never lambdas: Qt keeps a lambda that holds a widget alive, and the widget with it
+        button.setObjectName(name)
+        button.clicked.connect(self._pick)
+        return button
 
     def _pick(self):
         self.choice = self.sender().objectName()
@@ -754,8 +781,9 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ pickers
 
-    def pick_icon(self, world: World) -> str | None:
-        dialog = IconPicker(self, self.assets, world)
+    def pick_icon(self, world: World, taken: Container[str]) -> str | None:
+        """taken: the entrances the map already has."""
+        dialog = IconPicker(self, self.assets, world, taken)
         return dialog.choice if dialog.exec() else None
 
     def pick_eg_tile(self, page: GraphPage) -> rooms.Tile | None:

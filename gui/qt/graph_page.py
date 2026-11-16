@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QGraphicsLineItem,
     QGraphicsPathItem,
     QGraphicsPolygonItem,
-    QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
@@ -61,7 +60,7 @@ from gui.Doors.rooms import (
     entrance_only,
     supertile,
 )
-from gui.qt.items_panel import ItemsPanel
+from gui.qt.items_panel import ITEMS, PICTURE_NAMES, ItemsPanel, picture
 from gui.qt.style import (
     BACKGROUND,
     CHECK_COLLECTED,
@@ -104,7 +103,7 @@ class Hit:
     node: Node | None = None  # a room card
     door: str | None = None  # a door dot
     icon: str | None = None  # an icon, by the door it is on
-    edge: Edge | None = None  # a line between doors, or the seam of a joined link
+    edge: Edge | None = None  # a line between doors
     check: str | None = None  # a check's square, with the node it is on
 
 
@@ -116,6 +115,35 @@ class Press:
     pos: QPointF  # last mouse position, in view pixels
     node: Node | None = None  # what dragging moves; None pans the view
     moved: bool = False
+
+
+def question_mark() -> QPixmap:
+    """An icon the sheet does not have, the size of one that it does."""
+    picture = QPixmap(16, 16)
+    picture.fill(QColor("white"))
+    painter = QPainter(picture)
+    font = QFont()
+    font.setPixelSize(14)
+    font.setBold(True)
+    # Hard edges, like the sheet's icons, as it is drawn enlarged
+    font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+    painter.setFont(font)
+    painter.setPen(QColor("#111"))
+    painter.drawText(picture.rect(), Qt.AlignmentFlag.AlignCenter, "?")
+    painter.end()
+    return picture
+
+
+def item_icon(item: str) -> QPixmap:
+    """An item's picture as an icon like the sheet's: at half size, the size the game draws it, on black."""
+    whole = picture(PICTURE_NAMES.get(item, item))
+    half = whole.scaled(whole.width() // 2, whole.height() // 2, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+    icon = QPixmap(16, 16)
+    icon.fill(QColor("black"))
+    painter = QPainter(icon)
+    painter.drawPixmap((16 - half.width()) // 2, (16 - half.height()) // 2, half)
+    painter.end()
+    return icon
 
 
 class Assets:
@@ -181,12 +209,17 @@ class Assets:
         import data.doors_sprite_data as sprites
 
         if name not in self._icons:
-            if name not in sprites.all_icons:
+            if name == sprites.REACHABLE:
+                self._icons[name] = question_mark()
+            elif name in ITEMS:
+                self._icons[name] = item_icon(name)
+            elif name in sprites.all_icons:
+                if self._sheet is None:
+                    self._sheet = QPixmap(str(ITEM_SHEET_PATH))
+                row, column = sprites.all_icons[name]
+                self._icons[name] = self._sheet.copy(column * 16, row * 16, 16, 16)
+            else:
                 return None
-            if self._sheet is None:
-                self._sheet = QPixmap(str(ITEM_SHEET_PATH))
-            row, column = sprites.all_icons[name]
-            self._icons[name] = self._sheet.copy(column * 16, row * 16, 16, 16)
         return self._icons[name]
 
 
@@ -470,18 +503,6 @@ class DoorsItem(QGraphicsItem):
             painter.drawLine(QPointF(x + 7, y - 7), QPointF(x - 7, y + 7))
 
 
-class SeamItem(QGraphicsRectItem):
-    """Bar across the doorway of two joined rooms."""
-
-    def __init__(self, parent: QGraphicsItem, x: float, y: float, vertical: bool, edge: Edge):
-        long_side, short_side = 11.0, 5.0
-        hw, hh = (long_side, short_side) if vertical else (short_side, long_side)
-        super().__init__(QRectF(x - hw, y - hh, hw * 2, hh * 2), parent)
-        self.hit = Hit(edge=edge)
-        self.setPen(QPen(QColor("#111"), 2))
-        self.setBrush(QColor("#fffbe0"))
-
-
 class IconItem(QGraphicsItem):
     """Icon on a door: an annotation or a lobby entrance."""
 
@@ -586,6 +607,7 @@ class LinkItem(QGraphicsPathItem):
         self.facing_a = door_vector(a) if not model.is_hidden_dark(self.node_a.tile) else None
         self.facing_b = door_vector(b) if not model.is_hidden_dark(self.node_b.tile) else None
         self.same_block = model.blocks.root.get(self.node_a) == model.blocks.root.get(self.node_b)
+        self.joined = edge.link in model.blocks.joined
         way = one_way(model, edge)
         self.one_way = way is not None
         self.backwards = way == (b, a)  # the arrow's head is at a
@@ -623,8 +645,9 @@ class LinkItem(QGraphicsPathItem):
         c2 = QPointF(bx + db[0] * reach, by + db[1] * reach) if db else None
         end = QPointF(bx, by)
         if c1 is not None and c2 is not None:
-            if self.same_block and not self.interior and dist > 1:
-                # Same block: the plain curve would be a straight line, so bow it sideways
+            if self.same_block and not self.interior and not self.joined and dist > 1:
+                # Same block: the plain curve would be a straight line, so bow it sideways. Not across a joined
+                # doorway, where the two doors meet
                 px, py = -(by - ay) / dist, (bx - ax) / dist
                 if py < 0 or (py == 0 and px < 0):
                     px, py = -px, -py
@@ -984,20 +1007,12 @@ class GraphPage(QWidget):
 
         colours = dict(zip(model.door_links, link_colours(len(model.door_links))))
         for edge in model.edges():
-            if edge.link in model.blocks.joined:
-                # Joined: a seam across the doorway instead of a line
-                node = self.model.rooms.node(edge.a)
-                ax, ay = model.port(edge.a)
-                bx, by = model.port(edge.b)
-                cx, cy = model.pos[node]
-                # Joined doorways face north/south or east/west
-                vertical = door_vector(edge.a) in ((0, -1), (0, 1))
-                SeamItem(self._doors[node], (ax + bx) / 2 - cx, (ay + by) / 2 - cy, vertical, edge)
-                continue
             if edge.kind is EdgeKind.WARP:
                 colour = WARP_COLOUR
             elif edge.kind in (EdgeKind.DROP, EdgeKind.HOLE):
                 colour = DROP_COLOUR
+            elif edge.link in model.blocks.joined:
+                colour = "white"
             elif edge.link is not None:
                 colour = colours[edge.link]
             else:
@@ -1367,7 +1382,7 @@ class GraphPage(QWidget):
             model.set_entrance_used(hit.icon, False)
             self.rebuild()
         elif hit.door is not None:
-            icon = self.top.pick_icon(self.tab_world)
+            icon = self.top.pick_icon(self.tab_world, {lobby.lobby for lobby in model.lobby_doors})
             if icon:
                 import data.doors_sprite_data as sprites
 

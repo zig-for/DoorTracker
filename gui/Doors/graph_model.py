@@ -24,6 +24,7 @@ from data.doors_data import (
     regions_to_doors,
     simple_tiles,
 )
+from data.doors_sprite_data import REACHABLE
 from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
 from gui.Doors.checks import checks
@@ -234,7 +235,6 @@ class GraphModel:
         self.held: set[Node] = set()  # being dragged
         self._damping: dict[Node, layout.Damping] = {}
         self._last_step = 0.0
-        self._seam_doors: set[str] = set()
         self._linked_doors: set[str] = set()
         self._piece_cache: dict[Node, list[Box]] = {}
         # Solver inputs that only change when the blocks are rebuilt; see _build_blocks
@@ -279,10 +279,6 @@ class GraphModel:
         self._relax(iterations=iterations, old_mobility=1.0, springs=self._settle_springs, cold=True)
 
     def _refresh_door_sets(self) -> None:
-        self._seam_doors = set()
-        for link in self.blocks.joined:
-            self._seam_doors.add(link.door)
-            self._seam_doors.add(link.linked_door)
         self._linked_doors = set()
         for link in self.door_links:
             self._linked_doors.add(link.door)
@@ -566,8 +562,10 @@ class GraphModel:
         return True
 
     def annotate(self, door: str, icon: str, lobbies: Container[str]) -> None:
-        """Put an icon on a door. Lobby icons also make the door an entrance."""
-        if icon in lobbies or icon == "Drop":
+        """Put an icon on a door. Lobby icons also make the door an entrance, as do a drop and a place the player
+        can get to. It takes the place of what the door had: an entrance is switched for another, or for an icon."""
+        self.lobby_doors = [x for x in self.lobby_doors if x.door != door]
+        if icon in lobbies or icon in ("Drop", REACHABLE):
             self.add_lobby_door(door, icon)
             if "Drop" in door:
                 self.special_doors[door] = "Drop"
@@ -1033,7 +1031,13 @@ class GraphModel:
             return (0, 0)
         if "Drop" in door:
             return (0, -1)
-        return door_vector(door) or (0, 1)
+        facing = door_vector(door)
+        if facing is not None:
+            return facing
+        # Stairs face no way on the map: off the side of the room they are nearest
+        x, y = self.port_offset(door)
+        left, top, right, bottom = self.box(self.rooms.node(door))
+        return min((x - left, (-1, 0)), (right - x, (1, 0)), (y - top, (0, -1)), (bottom - y, (0, 1)))[1]
 
     def marker_boxes(self, node: Node) -> list[Box]:
         """Where the entrances on a node have their markers, stems and names, relative to the supertile centre.
@@ -1559,7 +1563,7 @@ class GraphModel:
         for door in self.rooms.doors(node):
             if entrance_only(door):
                 continue
-            if door in self._seam_doors or not self._door_visible(door):
+            if not self._door_visible(door):
                 continue
             interior = door in INTERIOR_DOORS
             if interior and node in self.compact:

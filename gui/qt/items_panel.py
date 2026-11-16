@@ -59,6 +59,7 @@ EQUIPMENT = [
     Slot(("Blue Mail", "Red Mail"), start="Green Mail"),
 ]
 SLOTS = [slot for row in (*MENU, ABILITIES, EQUIPMENT) for slot in row]
+ITEMS = [item for slot in SLOTS for item in (*([slot.start] if slot.start else []), *slot.items)]
 # The tracker's name for a dungeon -> what the keys strip calls it, in the order of the tabs
 SHORT_NAMES = {
     "Hyrule_Castle": "HC",

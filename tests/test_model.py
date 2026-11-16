@@ -33,11 +33,11 @@ def test_rooms_linked_through_facing_doorways_are_joined():
     a, b = model.rooms.node(door), model.rooms.node(other)
     assert link in model.blocks.joined
     assert model.blocks.root[a] == model.blocks.root[b]
-    # The two doorways meet, and are drawn as a seam instead of two dots
+    # The two doorways meet, and each keeps its dot
     ax, ay = model.port(door)
     bx, by = model.port(other)
     assert abs(ax - bx) + abs(ay - by) < 40
-    assert door not in {dot.door for dot in model.door_dots(a)}
+    assert door in {dot.door for dot in model.door_dots(a)}
 
 
 def test_stairs_link_rooms_without_joining_them():
@@ -159,6 +159,16 @@ def test_a_file_naming_doors_this_version_does_not_know_still_loads():
     assert joined_doors(again) == joined_doors(model)
     assert all("No Such Door" not in edge.a + edge.b for edge in again.edges())
     assert again.save()["door_links"] == saved["door_links"]
+
+
+def test_an_icon_put_on_an_entrance_takes_its_place():
+    model = new_model()
+    door = next(d for tile in model.tiles for d in open_doors(model, tile) if DOORS[d].facing == "So")
+    lobbies = list(dungeon_lobbies[model.tab_world])
+    for icon, entrances in ((lobbies[0], [(door, lobbies[0])]), (lobbies[1], [(door, lobbies[1])]), ("Bow", [])):
+        model.annotate(door, icon, lobbies)
+        assert [(lobby.door, lobby.lobby) for lobby in model.lobby_doors if lobby.door == door] == entrances
+        assert model.special_doors[door] == icon
 
 
 def test_removing_a_supertile_removes_everything_on_it():
