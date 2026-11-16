@@ -2,6 +2,7 @@ from pathlib import Path
 from data.worlds_data import World
 
 ITEM_SHEET_PATH = Path(__file__).parent / "Doors_Sheet.png"
+POT_PATH = Path(__file__).parent / "Pot.png"  # a pot on its stand, cut from the map's picture
 
 
 item_table = {

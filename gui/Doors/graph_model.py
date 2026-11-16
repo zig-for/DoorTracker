@@ -131,6 +131,7 @@ class CheckSpot:
     name: str  # in gui/Doors/checks.py
     x: float  # relative to the node's centre, world units
     y: float
+    kind: str  # "pot" for a key in a pot, "enemy" for one an enemy drops; see the flags in gui/Doors/checks.py
 
 
 @dataclass(frozen=True)
@@ -1622,7 +1623,7 @@ class GraphModel:
             check = checks[name]
             # A split supertile's checks each go on the part they are in
             if not split or self._check_node(name) == node:
-                spots.append(CheckSpot(name, (check["x"] / 512 - 0.5) * THUMB, (check["y"] / 512 - 0.5) * THUMB))
+                spots.append(CheckSpot(name, (check["x"] / 512 - 0.5) * THUMB, (check["y"] / 512 - 0.5) * THUMB, check["flags"][0][0]))
         return spots
 
     def _check_node(self, name: str) -> Node:

@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from data.doors_data import mandatory_tiles
-from data.doors_sprite_data import ITEM_SHEET_PATH
+from data.doors_sprite_data import ITEM_SHEET_PATH, POT_PATH
 from data.room_bounds import room_bounds
 from data.worlds_data import World
 from gui.Doors import bosses
@@ -92,6 +92,8 @@ MODEL_OPTIONS = {
 }
 WORLD = 1_000_000  # scene half-extent
 CHECK_SIZE = 9.0  # side of a check's square, world units
+CHECK_EDGE = 1.5  # how much of the square shows round a picture in it
+POT_EDGE = 2.0  # and round a pot
 BOSS_SIZE = 12.0  # side of a boss room's boss
 # A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
 # shifts by less than this on every solver step, which would otherwise redraw everything
@@ -128,13 +130,31 @@ def question_mark() -> QPixmap:
     font = QFont()
     font.setPixelSize(14)
     font.setBold(True)
-    # Hard edges, like the sheet's icons, as it is drawn enlarged
+    # Hard edges, like the sheet's icons: it is pixel art too
     font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
     painter.setFont(font)
     painter.setPen(QColor("#111"))
     painter.drawText(picture.rect(), Qt.AlignmentFlag.AlignCenter, "?")
     painter.end()
     return picture
+
+
+_enlarged: dict[tuple[int, int], QPixmap] = {}  # (a picture's cache key, how many times) -> it enlarged, hard edged
+
+
+def draw_pixel_art(painter: QPainter, target: QRectF, picture: QPixmap) -> None:
+    """Draw a small picture so that its pixels stay square and keep still at any zoom.
+
+    Scaled smoothly all the way it blurs, and scaled with hard edges its pixels come out uneven widths that
+    shift as the view zooms. So it is enlarged with hard edges by the whole number of times that fits, once for
+    each such number, and the painter smooths only what is left, which is less than double.
+    """
+    drawn = target.width() * painter.worldTransform().m11() * painter.device().devicePixelRatioF()
+    times = max(1, int(drawn / picture.width()))
+    key = (picture.cacheKey(), times)
+    if key not in _enlarged:
+        _enlarged[key] = picture.scaled(picture.width() * times, picture.height() * times, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+    painter.drawPixmap(target, _enlarged[key], QRectF(_enlarged[key].rect()))
 
 
 def item_icon(item: str) -> QPixmap:
@@ -158,6 +178,7 @@ class Assets:
         self._thumbnails: dict[tuple[Tile, int], QPixmap] = {}
         self._sheet: QPixmap | None = None
         self._icons: dict[str, QPixmap] = {}
+        self._pot: QPixmap | None = None
         self._boss_sheet: QPixmap | None = None
         self._bosses: dict[str, QPixmap] = {}
 
@@ -209,6 +230,11 @@ class Assets:
             if size >= wanted_px:
                 return levels[size]
         return levels[512]
+
+    def pot(self) -> QPixmap:
+        if self._pot is None:
+            self._pot = QPixmap(str(POT_PATH))
+        return self._pot
 
     def boss(self, name: str) -> QPixmap:
         """A boss's icon, cut from the sheet of them."""
@@ -498,15 +524,24 @@ class DoorsItem(QGraphicsItem):
             painter.setPen(QPen(QColor(style.outline), 1.5))
             painter.setBrush(QColor(style.fill))
             painter.drawRect(QRectF(check.x - half, check.y - half, CHECK_SIZE, CHECK_SIZE))
+            # A key in a pot has a pot in its square, and one an enemy drops a key: fainter once collected. The
+            # square's colour shows through around them
+            shown = page.assets.pot() if check.kind == "pot" else picture("Small Key") if check.kind == "enemy" else None
+            if shown is not None:
+                # As big as fits inside the square's edge, in the picture's own shape. A pot is on its stand, which
+                # hides the square behind it, so it is given more edge
+                tall = CHECK_SIZE - 2 * (POT_EDGE if check.kind == "pot" else CHECK_EDGE)
+                wide = tall * shown.width() / shown.height()
+                painter.setOpacity(0.35 if check.name in page.top.collected else 1.0)
+                draw_pixel_art(painter, QRectF(check.x - wide / 2, check.y - tall / 2, wide, tall), shown)
+                painter.setOpacity(1.0)
         # A boss room's boss. Until the player has picked it, a skull with a question mark on the corner
         half = BOSS_SIZE / 2
         for boss in self.bosses:
             box = QRectF(boss.x - half, boss.y - half, BOSS_SIZE, BOSS_SIZE)
-            picture = page.assets.boss(boss.boss) if boss.boss else page.assets.icon("Skull")
-            assert picture is not None  # the sheet has a skull
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-            painter.drawPixmap(box, picture, QRectF(picture.rect()))
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            shown = page.assets.boss(boss.boss) if boss.boss else page.assets.icon("Skull")
+            assert shown is not None  # the sheet has a skull
+            draw_pixel_art(painter, box, shown)
             painter.setPen(QPen(QColor("#111"), 1))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(box)
@@ -590,9 +625,7 @@ class IconItem(QGraphicsItem):
             painter.setPen(QColor("white"))
             painter.drawText(box, Qt.AlignmentFlag.AlignCenter, "?")
         elif self.icon is not None:
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-            painter.drawPixmap(QRectF(self.spot.x() - 8, self.spot.y() - 8, 16, 16), self.icon, QRectF(0, 0, 16, 16))
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            draw_pixel_art(painter, QRectF(self.spot.x() - 8, self.spot.y() - 8, 16, 16), self.icon)
         if self.lobby:
             lod = option.levelOfDetailFromTransform(painter.worldTransform())
             if lod * 10 >= 5:
