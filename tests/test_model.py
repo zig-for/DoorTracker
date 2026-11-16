@@ -251,9 +251,11 @@ def test_a_seeds_links_and_entrances_are_read_back_from_its_rom():
     # Two of the original game's links, a west door to an east one and an east to a west, joined the other way
     (a, b), (c, d) = VANILLA[0], VANILLA[1]
     pairs = [(a, c), (b, d), *VANILLA[2:]]
-    seed = seed_map.decode(a_rom(pairs, default_one_way_connections))
+    # Three entrances moved: to a room's right door, to a left one, and to a middle one
+    moved = {"Eastern": "Eastern Hint Tile Blocked Path SE", "Skull 1": "Skull Star Pits SW", "Skull 3": "Eastern Darkness S"}
+    seed = seed_map.decode(a_rom(pairs, default_one_way_connections, moved))
     assert seed.leads == {**dict(pairs), **{y: x for x, y in pairs}, **dict(default_one_way_connections)}
-    assert seed.entrances == {portal.name: portal.door.name for portal in doors_and_portals()[1]}
+    assert seed.entrances == {portal.name: portal.door.name for portal in doors_and_portals()[1]} | moved
     # Each pair once, and the ways into rooms with no way back
     assert len(seed.links(decoupled=False)) == len(pairs) + len(default_one_way_connections)
 
@@ -261,7 +263,8 @@ def test_a_seeds_links_and_entrances_are_read_back_from_its_rom():
 def test_the_cheat_gives_each_tab_its_own_dungeon_as_the_seed_made_it():
     seed = seed_map.decode(a_rom(VANILLA, default_one_way_connections))
     for tab in sorted({record.dungeon for record in SUPERTILES.values() if record.dungeon}):
-        model = new_model(tab)
+        # Rooms only fallen into are the dungeon's too, whatever the option says of where holes land
+        model = new_model(tab, vanilla_drops=False)
         model.add_tile(DOORS["Hera Lobby S"].tile, has_been_lit=True)  # what was on the map goes
         mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]}
         model.show_seed(seed.links(decoupled=False), mine)

@@ -509,7 +509,8 @@ class GraphModel:
         for name, door in entrances.items():
             self.add_lobby_door(door, name)
         self.door_links = [Link(door, leads_to) for door, leads_to in links]
-        reached, _ = self._walk(self.lobby_door_names(), None)
+        # The ROM read says nothing of holes: they are taken to land where the original game's do
+        reached, _ = self._walk(self.lobby_door_names(), None, falls=True)
         self.door_links = [link for link in self.door_links if any(region in reached for region in regions_at(link.door))]
         self.special_doors.update(notes)
         self._sync_model()
@@ -853,11 +854,13 @@ class GraphModel:
                 drain()
         return seen
 
-    def _leads(self) -> dict[str, list[str]]:
-        """Door or passage -> the doors and regions it comes out at, each only the way it goes."""
+    def _leads(self, falls: bool) -> dict[str, list[str]]:
+        """Door or passage -> the doors and regions it comes out at, each only the way it goes.
+
+        falls: whether a hole lands where it does in the original game.
+        """
         leads = defaultdict(list)
-        # Where a hole lands in the original game is only where it lands here if the option says so
-        moved = set() if self.experimental_flags.get("vanilla_drops") else HOLES
+        moved = set() if falls else HOLES
         for a, b in DEFAULT_DOORS.items():
             if a not in moved:
                 leads[a].append(b)
@@ -873,7 +876,7 @@ class GraphModel:
                     leads[a].append(b)
         return leads
 
-    def _walk(self, starts: list[str], items: frozenset[str] | None) -> tuple[dict[str, int], frozenset[str]]:
+    def _walk(self, starts: list[str], items: frozenset[str] | None, falls: bool | None = None) -> tuple[dict[str, int], frozenset[str]]:
         """Walk from some doors as the randomizer does, going through each door and passage only the way it goes.
 
         Returns the regions reached, each with the crystal barriers that can be down on getting there (BLUE,
@@ -881,12 +884,14 @@ class GraphModel:
         way, like draining the swamp.
 
         A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met.
-        What is reached stays reached. A rule can ask for something done or for a region reached, so whenever
-        there is more of either, every way out is tried again.
+        What is reached stays reached. A rule can ask for a region reached, so every way out is tried again until
+        no more is reached. Only then is what got done on the way counted, and every way out tried again: a rule
+        can ask for something not done, and is asked before it is.
 
         items: what the player holds. None for no rules and no barriers.
+        falls: whether a hole lands where it does in the original game. None for what the option says.
         """
-        leads = self._leads()
+        leads = self._leads(bool(self.experimental_flags.get("vanilla_drops")) if falls is None else falls)
         reached: dict[str, int] = {}
         held = items or frozenset()
         queue: deque[str] = deque()
@@ -900,7 +905,7 @@ class GraphModel:
         for start in starts:
             # A dungeon is entered with the orange barriers down
             arrive(start, EITHER if items is None else ORANGE)
-        tried = None  # how much was reached and held when every way out was last tried again
+        tried = None  # how much was reached when every way out was last tried again; it only ever grows
         while True:
             while queue:
                 region = queue.popleft()
@@ -914,11 +919,12 @@ class GraphModel:
                             arrive(target, barrier or down)
             if items is None:
                 break
-            held |= {event for event, (region, rule) in events.items() if region in reached and holds(rule, held, reached)}
-            # Both only ever grow, so these numbers are the same only when nothing has changed
-            now = (len(reached), sum(reached.values()), len(held))
+            now = (len(reached), sum(reached.values()))
             if now == tried:
-                break
+                done = {event for event, (region, rule) in events.items() if region in reached and holds(rule, held, reached)}
+                if done <= held:
+                    break
+                held |= done
             tried = now
             queue.extend(reached)
         return reached, held

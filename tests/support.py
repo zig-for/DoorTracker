@@ -1,5 +1,7 @@
 """Helpers for building maps in tests. Maps are built from the door tables, not from tracker files."""
 
+import copy
+
 from data.doors_data import dark_tiles, default_door_connections, ladders, open_edges, spiral_staircases, straight_staircases
 from data.worlds_data import dungeon_worlds
 from gui.Doors import seed_map
@@ -12,9 +14,9 @@ OPPOSITE = {"No": "So", "So": "No", "Ea": "We", "We": "Ea"}
 VANILLA = [*default_door_connections, *spiral_staircases, *straight_staircases, *open_edges, *ladders]
 
 
-def a_rom(pairs, one_way=()):
+def a_rom(pairs, one_way=(), moved=None):
     """What the tracker reads of a ROM whose doors are joined in these pairs: written as the randomizer's Rom.py
-    writes it, with every dungeon entrance at its own door."""
+    writes it. Every dungeon entrance is at its own door, but for those in moved: entrance -> the door it is at."""
     doors, portals = doors_and_portals()
     named = {door.name: door for door in doors}
     image = bytearray(0x200000)
@@ -22,6 +24,9 @@ def a_rom(pairs, one_way=()):
         data = named[b].getTarget(named[a])
         image[named[a].getAddress() : named[a].getAddress() + len(data)] = bytes(data)
     for portal in portals:
+        if moved and portal.name in moved:
+            portal = copy.copy(portal)
+            portal.door = named[moved[portal.name]]
         image[seed_map.ENTRANCE_ROOMS + portal.ent_offset * 2] = portal.current_room()
         at = seed_map.ENTRANCE_SCROLLS + portal.ent_offset * 2
         image[at : at + 2] = bytes(portal.scroll_x())

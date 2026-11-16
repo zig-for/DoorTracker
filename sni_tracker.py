@@ -77,6 +77,8 @@ async def read_rom(stub, uri: str, add_space, mem_mapping, reads: Mapping[str, t
             requests = build_multi_request(add_space, mem_mapping, dict(enumerate(pieces[first : first + at_once])))
             reply = await stub.MultiRead(sni_pb2.MultiReadMemoryRequest(uri=uri, requests=list(requests.values())))
             data += b"".join(bytes(response.data) for response in reply.responses)
+        if len(data) != size:
+            raise OSError(f"SNI read {len(data)} of {size} bytes of the ROM at {address:#x}")
         out[name] = data
     return out
 
@@ -313,8 +315,10 @@ async def _sni_session(
             readings_to_check_read -= 1
 
             if ui.seed_map_wanted:
+                # Still wanted if the read fails, so it is read again once the connection is back
+                memory = await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, seed_map.READS)
                 ui.seed_map_wanted = False
-                ui.seed_map_read(await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, seed_map.READS))
+                ui.seed_map_read(memory)
 
             # if args.darkpos:
             #     is_dark = False
