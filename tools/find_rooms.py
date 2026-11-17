@@ -152,6 +152,10 @@ def distance_to(box, x, y):
     return (dx * dx + dy * dy) ** 0.5
 
 
+def area(box):
+    return (box[2] - box[0]) * (box[3] - box[1])
+
+
 def floor_patch(px, room, x, y, facing):
     """Box around the floor inside a door, or None.
 
@@ -283,8 +287,8 @@ def main():
         for mark_x, mark_y in marks[tile]:
             if not rooms:
                 break
-            # Nearest room
-            nearest = min(range(len(rooms)), key=lambda i: distance_to(rooms[i], mark_x, mark_y))
+            # Nearest room. One room's box can be inside another's: a mark in both is the inner room's
+            nearest = min(range(len(rooms)), key=lambda i: (distance_to(rooms[i], mark_x, mark_y), area(rooms[i])))
             live.add(nearest)
         entry = {
             "live": [rooms[i] for i in sorted(live)],
