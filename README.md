@@ -22,7 +22,7 @@ Rooms whose linked doorways fit together (a north door onto a south door, an eas
 
 Auto-tracking will track supertiles, links between doors and lobbies. Dark rooms are only visible if the player has a lamp or a torch lit, otherwise they are obscured. The card the player is in is outlined in red.
 
-Green doors are still unexplored, grey doors are linked. An unexplored door is red if you cannot go through it with the items you hold, and hollow if no entrance on the map leads to it. Hover anything to see its name in the toolbar. Hovering a room also fades every link that does not touch it. Lobbies hang off the door they lead to as a small entrance node.
+Green doors are still unexplored, grey doors are linked. An unexplored door is red if you cannot go through it with the items you hold, and hollow if no entrance on the map leads to it. Mouse over anything to see its name in the toolbar. Mousing over a room also fades every link that does not touch it. Lobbies hang off the door they lead to as a small entrance node.
 
 The map is kept between launches: it is saved a second after each change and when the tracker closes, and loaded again the next time it starts. Starting the tracker with a file on the command line loads that file instead. File -> New (Ctrl+N) starts an empty map that belongs to no seed; while auto-tracking is connected to a game it warns first, as the new map then replaces the one saved for that game's seed, and otherwise it asks first if the map on screen would be lost. Untick File -> Autosave to stop both the saving and the loading at launch. If an autosave cannot be read or written, a warning says so and Autosave is turned off until you tick it again or restart.
 
