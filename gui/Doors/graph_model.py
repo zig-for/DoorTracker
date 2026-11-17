@@ -30,7 +30,7 @@ from gui.Doors import layout, rooms
 from gui.Doors.bosses import BOSS_ROOMS, beating
 from gui.Doors.checks import BIG_KEY_DROPS, Drop, checks
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
-from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, holds
+from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, STARTING_ITEMS, holds
 from gui.Doors.rules import check_regions, check_rules, crystals, events, passage_rules
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
@@ -200,7 +200,7 @@ class GraphModel:
         self.spacing = float(REPEL_RANGE)  # repulsion reach
         self.leaf_pull = 2.5  # pull boost for blocks linked to a single other block
         self.circle_repulsion = False  # repel as one enclosing circle per block
-        self.items: frozenset[str] | None = None  # what the player holds; None when no game has been read
+        self.items = STARTING_ITEMS  # what the player holds
         self._shown_rooms = rooms.Rooms(True, whole=self.is_hidden_dark)
         self.reset()
 
@@ -923,7 +923,8 @@ class GraphModel:
         way, like draining the swamp.
 
         A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met,
-        and, out of a boss room whose boss the player has picked, when that boss can be beaten.
+        out of a boss room whose boss the player has picked, when that boss can be beaten, and by a door marked
+        as a big key door, when the big key is held.
         What is reached stays reached. A rule can ask for a region reached, so every way out is tried again until
         no more is reached. Only then is what got done on the way counted, and every way out tried again: a rule
         can ask for something not done, and is asked before it is.
@@ -937,6 +938,10 @@ class GraphModel:
         queue: deque[str] = deque()
         # Way out of a boss room -> what going past the boss picked for the room takes
         beaten = {way: beating(tile, boss, self.dungeon_name) for tile, boss in self.bosses.items() if tile in BOSS_ROOMS for way in BOSS_ROOMS[tile].ways}
+        # A door marked as a big key door takes the big key of the dungeon it is in, as a big chest does. The mark
+        # is for its own side, as the randomizer has it: the door it is linked to is locked only if marked too
+        locked = {door for door, icon in self.special_doors.items() if icon == "Big Key Door"}
+        big_key = BIG_KEYS[self.dungeon_name]
 
         def arrive(name: str, down: int) -> None:
             for region in regions_at(name):
@@ -956,7 +961,7 @@ class GraphModel:
                     # A way through a barrier takes its colour down, and leaves it down. The way back from hitting
                     # a crystal switch leaves whichever the player likes
                     barrier = crystals.get(way_out, 0)
-                    rules = (passage_rules.get(way_out, True), beaten.get(way_out, True))
+                    rules = (passage_rules.get(way_out, True), beaten.get(way_out, True), big_key if way_out in locked else True)
                     if items is None or ((not barrier or down & barrier) and all(holds(rule, held, reached) for rule in rules)):
                         for target in leads.get(way_out, ()):
                             arrive(target, barrier or down)
@@ -977,14 +982,11 @@ class GraphModel:
         # Only an entrance is a place to start from: a room nothing leads to has no way to it yet
         starts = [door for door in self.lobby_door_names() if not self.assumed(door)]
         self._routed, _ = self._walk(starts, None)
-        if self.items is None:
-            self._reachable, self._held, self._held_unrouted = self._routed, frozenset(), frozenset()
-            return
         self._reachable, self._held = self._walk(starts, self.items)
         # For a check the map does not lead to, what gets done on the way to it is not known: only items are asked
         self._held_unrouted = self._held | EVENTS
 
-    def set_items(self, items: frozenset[str] | None) -> None:
+    def set_items(self, items: frozenset[str]) -> None:
         self.items = items
         self._find_reach()
 
@@ -996,9 +998,7 @@ class GraphModel:
             # A big chest takes the big key of the dungeon it is in, which with crossed doors is this tab's
             rule = ("all", rule, BIG_KEYS[self.dungeon_name])
         routed = region in self._routed
-        if self.items is None:
-            opens = True
-        elif routed:
+        if routed:
             opens = holds(rule, self._held, self._reachable)
         else:
             # Nor is it known what would be reached by then: what the rule asks of a region is taken as met

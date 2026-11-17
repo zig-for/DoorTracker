@@ -6,6 +6,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox
 
 import DoorsTracker
+from gui.Doors.logic import STARTING_ITEMS
 from support import grow, positions
 
 TAB = "Turtle_Rock"
@@ -243,7 +244,7 @@ def test_what_was_read_from_a_game_or_asked_of_it_is_not_carried_to_another(wind
     else:
         window.seed_seen("bbbbbbbbbb")
     assert not window.cheat_wanted and not window.seed_map_wanted
-    assert window.pages[TAB].model.items is None
+    assert window.pages[TAB].model.items == STARTING_ITEMS
 
 
 def test_disconnecting_leaves_the_map_and_its_seed_alone(window, monkeypatch):

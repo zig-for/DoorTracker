@@ -1193,8 +1193,8 @@ class GraphPage(QWidget):
         if self._settling_size and self.model.pos:
             self.fit_view()
 
-    def set_items(self, items: frozenset[str] | None, small_keys: Mapping[str, int]) -> None:
-        """What the player holds, as the auto-tracker just read it. small_keys: how many, by dungeon."""
+    def set_items(self, items: frozenset[str], small_keys: Mapping[str, int]) -> None:
+        """What the player holds. small_keys: how many, by dungeon."""
         self.model.set_items(items)
         self.items_panel.show_held(items, small_keys)
         self._place_items_panel()

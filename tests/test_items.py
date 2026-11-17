@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
 from DoorsTracker import IconPicker
-from gui.Doors.logic import BIG_KEYS, COMPASSES, ITEMS_AT, ITEMS_LENGTH, MAPS, READABLE, hearts_held, small_keys
+from gui.Doors.logic import BIG_KEYS, COMPASSES, ITEMS_AT, ITEMS_LENGTH, MAPS, READABLE, STARTING_ITEMS, hearts_held, small_keys
 from gui.qt.items_panel import BIG_KEY_PICTURE, ITEMS, PICTURE_NAMES, PICTURES, SHORT_NAMES, SLOTS, clicked, picture
 
 
@@ -85,12 +85,12 @@ def test_clicking_in_the_panel_sets_what_is_held_in_every_tab(window, app):
     QTest.mouseClick(panel.counts["Desert_Palace"], left)
     QTest.mouseClick(panel.counts["Swamp_Palace"], right)  # not below none
     QTest.mouseClick(panel.big_keys["Thieves_Town"], left)
-    assert other.model.items == {"Hammer", "Big Key (Thieves Town)"}
+    assert other.model.items == STARTING_ITEMS | {"Hammer", "Big Key (Thieves Town)"}
     assert other.items_panel.counts["Desert_Palace"].text() == "2"
     assert other.items_panel.counts["Swamp_Palace"].text() == "0"
 
     QTest.mouseClick(shown["Hammer"], right)
-    assert other.model.items == {"Big Key (Thieves Town)"}
+    assert other.model.items == STARTING_ITEMS | {"Big Key (Thieves Town)"}
 
     # Hearts go up from the three the game starts with, and not back below them
     QTest.mouseClick(panel.hearts, left)

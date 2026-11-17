@@ -9,7 +9,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import QAbstractButton, QGridLayout, QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget
 
-from gui.Doors.logic import BIG_KEYS, BOTTLE, FIRST_HEARTS, HEARTS, hearts_held, with_hearts
+from gui.Doors.logic import BIG_KEYS, BOTTLE, FIRST_HEARTS, HEARTS, STARTING_ITEMS, hearts_held, with_hearts
 from gui.Doors.randomizer import FOLDER
 
 PICTURES = FOLDER / "data" / "itemgfx"  # the randomizer's own, 32 pixels high
@@ -295,7 +295,7 @@ class ItemsPanel(QWidget):
             columns.append(column)
             self.counts[dungeon], self.big_keys[dungeon] = count, key
         inside.addLayout(spread(columns))
-        self.show_held(None, {})
+        self.show_held(STARTING_ITEMS, {})
 
     def _tab_clicked(self) -> None:
         self.toggled(self.body.isHidden())
@@ -306,8 +306,7 @@ class ItemsPanel(QWidget):
         if isinstance(what, Slot):
             items = clicked(what, items, step)
         elif what == "hearts":
-            count = max(FIRST_HEARTS, hearts_held(items)) + step
-            items = with_hearts(items, min(len(HEARTS), max(FIRST_HEARTS, count)))
+            items = with_hearts(items, min(len(HEARTS), max(FIRST_HEARTS, hearts_held(items) + step)))
         elif isinstance(what, tuple):
             kind, dungeon = what
             if kind == "big key":
@@ -329,15 +328,14 @@ class ItemsPanel(QWidget):
         self.tab.update()
         self.adjustSize()
 
-    def show_held(self, items: frozenset[str] | None, small_keys: Mapping[str, int]) -> None:
-        """Light what is held. items is None when none have been read or clicked: nothing is lit."""
-        self.items, self.small_keys = items or frozenset(), dict(small_keys)
+    def show_held(self, items: frozenset[str], small_keys: Mapping[str, int]) -> None:
+        """Light what is held."""
+        self.items, self.small_keys = items, dict(small_keys)
         for slot, label in self.slots:
             mine = [item for item in slot.items if item in self.items]
             label.setPixmap(slot_picture(slot, self.items))
             label.setToolTip(", ".join(mine if slot.together else mine[-1:]) or slot.start or slot.items[0])
-        # The game starts with some, which the tracker has not been told of until it reads a game
-        hearts = max(FIRST_HEARTS, hearts_held(self.items))
+        hearts = hearts_held(self.items)
         self.hearts.setPixmap(hearts_picture(hearts))
         self.hearts.setToolTip(f"{hearts} hearts")
         for dungeon, count in self.counts.items():
