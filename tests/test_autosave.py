@@ -58,6 +58,26 @@ def test_a_change_is_saved_and_the_next_window_gets_the_map_back(open_window, tm
     assert positions(model) == {node: (round(x, 1), round(y, 1)) for node, (x, y) in positions(page.model).items()}
 
 
+def test_what_is_held_is_saved_with_the_map(open_window, tmp_path, monkeypatch):
+    monkeypatch.setattr(DoorsTracker, "SAVE_DELAY", 0)
+    first = open_window()
+    first.start_autosave(tmp_path, restore=True)
+    held = STARTING_ITEMS | {"Hammer", "Big Key (Turtle Rock)"}
+    # As a click in the items panel sets it
+    first.set_held(held, {"Turtle_Rock": 2})
+    QTest.qWait(50)
+
+    second = open_window()
+    second.start_autosave(tmp_path, restore=True)
+    page = second.pages[TAB]
+    assert page.model.items == held
+    assert page.items_panel.counts["Turtle_Rock"].text() == "2"
+    # A file from before what is held was saved
+    second.load_data({})
+    assert page.model.items == STARTING_ITEMS
+    assert page.items_panel.counts["Turtle_Rock"].text() == "0"
+
+
 def test_each_seed_keeps_its_own_map(window, tmp_path):
     window.start_autosave(tmp_path, restore=True)
     window.seed_seen("aaaaaaaaaa")

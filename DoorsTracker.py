@@ -607,7 +607,9 @@ class MainWindow(QMainWindow):
             data["Castle_Tower"] = data.pop("Agahnims_Tower")
         self.seed_hash = data.pop("seed_hash", None)
         self.collected = set(data.pop("collected", None) or [])
-        self._forget_game()
+        # A file from before these were saved has neither
+        items, keys = data.pop("items", None), data.pop("small_keys", None)
+        self._forget_game(NOTHING_HELD if items is None else (frozenset(items), dict(keys or {})))
         self._adopt_seed = False
         # A spoiler lists lobbies apart from the dungeons: file each under the dungeon that owns it
         for lobby, door in (data.pop("lobbies", None) or {}).items():
@@ -643,6 +645,8 @@ class MainWindow(QMainWindow):
         if self.seed_hash is not None:
             data["seed_hash"] = self.seed_hash
         data["collected"] = sorted(self.collected)
+        items, keys = self._held
+        data["items"], data["small_keys"] = sorted(items), dict(keys)
         return data
 
     # ----------------------------------------------------------------- autosave
@@ -810,12 +814,15 @@ class MainWindow(QMainWindow):
             page.init_page()
         self._forget_game()
 
-    def _forget_game(self) -> None:
+    def _forget_game(self, held: tuple[frozenset[str], dict[str, int]] = NOTHING_HELD) -> None:
         """The map on screen is another one now, or another game's. What was read from the game before, and what
-        was asked of it, is not for this one. A tracker file does not say what is held."""
+        was asked of it, is not for this one.
+
+        held: the items and small keys the map now on screen was saved with.
+        """
         self.cheat_wanted = False
-        if self._held != NOTHING_HELD:
-            self.set_held(*NOTHING_HELD)
+        if self._held != held:
+            self._show_held(*held)
 
     def player_sprite_read(self, heads: list[bytes]) -> None:
         """The player's head in each mail's colours, as the auto-tracker read it from the game's ROM: see
@@ -873,7 +880,11 @@ class MainWindow(QMainWindow):
         self.map_changed()
 
     def set_held(self, items: frozenset[str], small_keys: dict[str, int]) -> None:
-        """What the player holds: as read from the game, or as clicked in the items panel."""
+        """What the player holds: as read from the game, or as clicked in the items panel. It is saved with the map."""
+        self._show_held(items, small_keys)
+        self.map_changed()
+
+    def _show_held(self, items: frozenset[str], small_keys: dict[str, int]) -> None:
         self._held = items, small_keys
         for page in self.pages.values():
             page.set_items(items, small_keys)

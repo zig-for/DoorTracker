@@ -9,7 +9,7 @@ A getting started document, including screenshots, controls nd more technical de
 This tracker will auto-track dungeon layouts from the Doors branch of ALttPR using SNI.
 
 - When visiting a dungeon, that dungeons tab will be auto-selected
-- The player's position is shown as the head of the game's own sprite, read from the ROM, in the colours of the mail worn. It is a red 'x' if the sprite has no head of its own
+- The player's position is shown as their sprite's head
 - Unvisited supertiles are automatically added to the map
 - Entering or exiting a dungeon will automatically add a lobby to the door
 - Mirroring will add a lobby to the door mirrored to
@@ -77,7 +77,7 @@ The toolbar is above the tabs: what it sets is the same in every tab. `Fit` and 
 - `Join fitting rooms` - Join rooms automatically as links are made. Turn it off to only join the links you middle click
 - View -> Show Checks - Draw each dungeon check as a square on its room (on by default)
   - Green: gettable. Grey: collected. Red: unreachable with current items. Hollow: no entrance on the map leads to it
-  - Key doors, bosses and dark rooms count as passable. A door you mark as a big key door takes the dungeon's big key, as do Zelda's cell and Blind's. In a standard seed, as read from the game, the way behind the throne room's tapestry is closed until Zelda is delivered or can be fetched from her cell
+  - Key doors, bosses and dark rooms count as passable. A door you mark as a big key door takes the dungeon's big key
   - Click a square to mark it collected, right click to take that back
   - `Pottery`, `Enemy Drops` - Show how many pots and enemy drops are left in each room. Needs auto-tracking
   - Drops into a dungeon and the sanctuary mirror route show a question mark, and are not counted as a way in, until you use one or click it
