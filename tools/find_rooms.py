@@ -35,6 +35,11 @@ HAND_AREAS = {
         "Mire BK Door Room N": [(16, 32, 496, 240)],
         "Mire Minibridge NE": [(355, 32, 412, 240), (16, 288, 240, 496), (272, 288, 496, 496)],
     },
+    # Dead ledge: the top right corner, up to the room's walls. Hub: the rest
+    (6, 3): {
+        "Swamp Hub Dead Ledge EN": [(420, 32, 496, 172)],
+        "Swamp Hub S": [(16, 32, 420, 496), (420, 172, 496, 496)],
+    },
     # Ledge: side pockets and bottom. Courtyard: middle
     (9, 10): {
         "Eastern Courtyard N": [(16, 32, 496, 250), (130, 250, 382, 330)],
