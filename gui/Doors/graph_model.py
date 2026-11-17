@@ -114,6 +114,8 @@ class Player:
 
 class DoorState(Enum):
     OPEN = "open"  # not linked yet
+    BLOCKED = "blocked"  # not linked yet, and the player's items do not let them go out by it
+    UNROUTED = "unrouted"  # not linked yet, and the map does not lead to it
     LINKED = "linked"  # linked, or an entrance
     INTERIOR = "interior"
 
@@ -236,6 +238,8 @@ class GraphModel:
         self._reachable: dict[str, int] = {}
         self._held: frozenset[str] = frozenset()  # the items, and what the player can do with them; see _find_reach
         self._held_unrouted: frozenset[str] = frozenset()  # the same, for a check with no way to it
+        self._routed_doors: set[str] = set()  # the doors and passages the map leads to
+        self._passable_doors: set[str] = set()  # and those of them the player's items let them go out by
         self.player: Player | None = None
         self.visited: set[Node] = set()  # where the player has been; saved as reached_parts
         self.used_entrances: set[str] = set()  # see assumed()
@@ -520,7 +524,7 @@ class GraphModel:
             self.add_lobby_door(door, name)
         self.door_links = [Link(door, leads_to) for door, leads_to in links]
         # The ROM read says nothing of holes: they are taken to land where the original game's do
-        reached, _ = self._walk(self.lobby_door_names(), None, falls=True)
+        reached, _, _ = self._walk(self.lobby_door_names(), None, falls=True)
         self.door_links = [link for link in self.door_links if any(region in reached for region in regions_at(link.door))]
         self.special_doors.update(notes)
         self._sync_model()
@@ -915,12 +919,12 @@ class GraphModel:
                     leads[a].append(b)
         return leads
 
-    def _walk(self, starts: list[str], items: frozenset[str] | None, falls: bool | None = None) -> tuple[dict[str, int], frozenset[str]]:
+    def _walk(self, starts: list[str], items: frozenset[str] | None, falls: bool | None = None) -> tuple[dict[str, int], frozenset[str], set[str]]:
         """Walk from some doors as the randomizer does, going through each door and passage only the way it goes.
 
         Returns the regions reached, each with the crystal barriers that can be down on getting there (BLUE,
-        ORANGE, or EITHER for both), and what the player holds by the end: their items, and what gets done on the
-        way, like draining the swamp.
+        ORANGE, or EITHER for both); what the player holds by the end: their items, and what gets done on the
+        way, like draining the swamp; and the doors and passages gone out by, linked to anything or not.
 
         A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met,
         out of a boss room whose boss the player has picked, when that boss can be beaten, and by a door marked
@@ -935,6 +939,7 @@ class GraphModel:
         leads = self._leads(bool(self.experimental_flags.get("vanilla_drops")) if falls is None else falls)
         reached: dict[str, int] = {}
         held = items or frozenset()
+        gone_out_by: set[str] = set()
         queue: deque[str] = deque()
         # Way out of a boss room -> what going past the boss picked for the room takes
         beaten = {way: beating(tile, boss, self.dungeon_name) for tile, boss in self.bosses.items() if tile in BOSS_ROOMS for way in BOSS_ROOMS[tile].ways}
@@ -963,6 +968,7 @@ class GraphModel:
                     barrier = crystals.get(way_out, 0)
                     rules = (passage_rules.get(way_out, True), beaten.get(way_out, True), big_key if way_out in locked else True)
                     if items is None or ((not barrier or down & barrier) and all(holds(rule, held, reached) for rule in rules)):
+                        gone_out_by.add(way_out)
                         for target in leads.get(way_out, ()):
                             arrive(target, barrier or down)
             if items is None:
@@ -975,14 +981,14 @@ class GraphModel:
                 held |= done
             tried = now
             queue.extend(reached)
-        return reached, held
+        return reached, held, gone_out_by
 
     def _find_reach(self) -> None:
         """Work out which regions the map leads to, and which of them the player's items let them walk to."""
         # Only an entrance is a place to start from: a room nothing leads to has no way to it yet
         starts = [door for door in self.lobby_door_names() if not self.assumed(door)]
-        self._routed, _ = self._walk(starts, None)
-        self._reachable, self._held = self._walk(starts, self.items)
+        self._routed, _, self._routed_doors = self._walk(starts, None)
+        self._reachable, self._held, self._passable_doors = self._walk(starts, self.items)
         # For a check the map does not lead to, what gets done on the way to it is not known: only items are asked
         self._held_unrouted = self._held | EVENTS
 
@@ -1615,7 +1621,14 @@ class GraphModel:
                 continue
             linked = door in self._linked_doors or door in lobby_doors
             ox, oy = self.port_offset(door)
-            state = DoorState.INTERIOR if interior else DoorState.LINKED if linked else DoorState.OPEN
+            if interior:
+                state = DoorState.INTERIOR
+            elif linked:
+                state = DoorState.LINKED
+            elif door not in self._routed_doors:
+                state = DoorState.UNROUTED
+            else:
+                state = DoorState.OPEN if door in self._passable_doors else DoorState.BLOCKED
             dots.append(DoorDot(door, ox, oy, state))
         return dots
 

@@ -74,6 +74,7 @@ from gui.qt.style import (
     DOOR_STYLES,
     DROP_COLOUR,
     EDGE_FADED,
+    OUTLINE,
     PLAYER,
     WARP_COLOUR,
     dungeon_colour,
@@ -601,12 +602,12 @@ class DoorsItem(QGraphicsItem):
                     painter.drawText(corner.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, "?")
         for dot in self.dots:
             style = DOOR_STYLES[dot.state]
-            fill, radius, outline = style.fill, DOOR_RADIUS * style.scale, style.outline
+            fill, edge, radius, outline = style.fill, style.edge, DOOR_RADIUS * style.scale, style.outline
             if dot.door == page.selected_door:
-                fill, radius, outline = DOOR_SELECTED, DOOR_RADIUS + 1, 2
+                fill, edge, radius, outline = DOOR_SELECTED, OUTLINE, DOOR_RADIUS + 1, 2
             if dot.door == page.hot_door:
-                fill, radius, outline = PLAYER, DOOR_RADIUS + 1, 2
-            painter.setPen(QPen(QColor("#111"), outline))
+                fill, edge, radius, outline = PLAYER, OUTLINE, DOOR_RADIUS + 1, 2
+            painter.setPen(QPen(QColor(edge), outline))
             painter.setBrush(QColor(fill))
             painter.drawEllipse(QPointF(dot.x, dot.y), radius, radius)
         player = page.model.player

@@ -6,7 +6,7 @@ from PySide6.QtTest import QTest
 from data.doors_data import regions_to_doors
 from data.doors_sprite_data import REACHABLE
 from gui.Doors.checks import checks
-from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState
+from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState, DoorState
 from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, ORANGE, READABLE, holds, items_held, with_hearts
 from gui.Doors.rooms import DOORS, SPLIT, Node
 from gui.Doors.rules import check_regions, check_rules, passage_rules
@@ -123,6 +123,25 @@ def test_a_check_past_a_door_marked_as_a_big_key_door_is_blocked_until_the_big_k
     model.remove_annotation("Hera Lobby Key Stairs")
     model.annotate("Hera Tile Room Up Stairs", "Big Key Door", [])
     assert model.check_state(name) is CheckState.OPEN
+
+
+def test_an_unlinked_door_is_unrouted_until_the_map_leads_to_it_and_blocked_until_the_player_can_go_out_by_it():
+    # Every way out of the hub is by the cane's platform
+    door = "TR Hub NE"
+    model = new_model("Turtle_Rock")
+    model.add_tile(DOORS[door].tile, has_been_lit=True)
+    model.update()
+
+    def state():
+        return next(dot.state for dot in model.door_dots(model.rooms.node(door)) if dot.door == door)
+
+    # Nothing leads to the room yet
+    assert state() is DoorState.UNROUTED
+    model.add_lobby_door("TR Hub SW", "Turtle_Rock")
+    model.update()
+    assert state() is DoorState.BLOCKED
+    model.set_items(frozenset({"Cane of Somaria"}))
+    assert state() is DoorState.OPEN
 
 
 def test_a_check_past_a_passage_is_blocked_until_the_item_for_the_passage_is_held():
