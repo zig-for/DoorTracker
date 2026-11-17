@@ -320,13 +320,32 @@ def test_the_cheat_reads_the_seeds_map_out_of_the_rom(window, app, monkeypatch):
     tile, door = door_facing("No")
     here = (tile, door["x"], door["y"])
     # As the menu leaves it once the tracker is connected
-    window.cheat_wanted = window.seed_map_wanted = True
+    window.cheat_wanted = True
     play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], rom=a_rom(VANILLA, default_one_way_connections))
 
     assert not window.seed_map_wanted and not window.cheat_wanted
+    assert window.pages["Eastern_Palace"].model.bosses == {(8, 12): "Armos Knights"}
     # The ROM has the doors as in the original game: a tab the player has not been in has its dungeon's rooms
     assert set(window.pages["Eastern_Palace"].model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == "Eastern_Palace"}
     assert ("Eastern Cannonball S", "Eastern Lobby Bridge N") in [(link.door, link.linked_door) for link in window.pages["Eastern_Palace"].model.door_links]
+
+
+def test_a_race_seed_gets_its_own_map_and_nothing_more_is_read_of_it(window, app, monkeypatch):
+    def read():
+        raise AssertionError("read past the first reading")
+
+    async def read_rom(*args):
+        read()
+
+    monkeypatch.setattr(window, "race_rom_warning", lambda: None)
+    monkeypatch.setattr(sni_tracker, "read_rom", read_rom)
+    window.cheat_wanted = True  # asked for before the race seed was loaded
+    tile, door = door_facing("No")
+    race = {**reading(tile, door["x"], door["y"]), "race": "01"}
+
+    play(window, app, monkeypatch, [("one", race), ("two", race)], during_check_read=read)
+    assert window.seed_hash == race["seed_hash"]
+    assert tile not in window.pages[TAB].model.tiles
 
 
 def test_a_rooms_pots_are_counted_down_as_they_are_emptied(window, app, monkeypatch):
@@ -364,12 +383,14 @@ def test_a_compass_alone_puts_the_seeds_boss_in_a_boss_room_already_on_the_map(w
     assert eastern.bosses == {boss_room: "Armos Knights"}
     # The rooms are as the player mapped them: that takes the map
     assert set(eastern.tiles) == mapped and not eastern.revealed
-    # The seed's map was asked for once: the room has had its boss, and the player can pick another for it
-    assert len(given) == 1
+    # The seed's map was handed over once: the room has had its boss
+    assert len(given) == 1 and not window.seed_map_wanted
     # A boss room that comes onto the map later has not: here one of Ganon's Tower's, as a seed can join them
     eastern.add_tile((12, 1), has_been_lit=True)
-    window._reveal()
     assert window.seed_map_wanted
+    # Not with the box unticked
+    window.set_option("compass_reveals", False)
+    assert not window.seed_map_wanted
 
 
 def test_a_dungeons_map_reveals_its_rooms_and_its_compass_its_boss(window, app, monkeypatch):

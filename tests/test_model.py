@@ -94,7 +94,9 @@ def decorated_map():
     model.set_pinned(model.rooms.node(model.door_links[3].door), True)
     spare = [d for tile in model.tiles for d in open_doors(model, tile)]
     model.annotate(spare[0], "Bow", [])
-    model.set_boss((4, 10), "Mothula")
+    # A boss as the seed's own map gives it, and the mark of a map that came from there
+    model.reveal_bosses({(4, 10): "Mothula"})
+    model.revealed = True
     model.auto_add_lobby(next(d for d in spare[1:] if DOORS[d].facing == "So"))
 
     # Still contested: the default order would join different links
@@ -112,6 +114,7 @@ def contents(model):
         "lobbies": [(lobby.door, lobby.lobby) for lobby in model.lobby_doors],
         "icons": model.special_doors,
         "bosses": model.bosses,
+        "from the seed": (model.revealed, model.bosses_revealed),
         "pinned": model.fixed,
         "lit": {tile: state.has_been_lit for tile, state in model.tiles.items()},
         "positions": {node: (round(x, 1), round(y, 1)) for node, (x, y) in model.pos.items()},

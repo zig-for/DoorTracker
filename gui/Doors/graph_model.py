@@ -540,8 +540,7 @@ class GraphModel:
         return any(tile in BOSS_ROOMS and tile not in self.bosses_revealed for tile in self.tiles)
 
     def reveal_bosses(self, bosses: dict[Tile, str]) -> None:
-        """Give each boss room on the map the seed's own boss, in place of any picked for it. A room is given it
-        once: another can be picked for it after, as anything put on the map from the seed can be changed.
+        """Give each boss room on the map the seed's own boss, in place of any picked for it.
 
         bosses: boss rooms' bosses, as the seed has them.
         """

@@ -306,7 +306,6 @@ class MainWindow(QMainWindow):
             self.resize(*WINDOW_SIZES[args.size or "medium"])
         self.device: str | None = None
         self.connected = False  # the auto-tracker is reading from a device
-        self.seed_map_wanted = False  # see _reveal: the auto-tracker reads the ROM and calls seed_map_read
         self.cheat_wanted = False  # the cheat was asked for, and has not been done yet
         self._adopt_seed = False  # see new_map
         self.sni_task: asyncio.Task | None = None
@@ -397,7 +396,7 @@ class MainWindow(QMainWindow):
         self.current_page().relayout()
 
     def _reveal_all(self) -> None:
-        """The cheat: ask the auto-tracker for the seed's own map; seed_map_read gets it."""
+        """The cheat: every tab gets its dungeon from the seed's own map; see seed_map_wanted."""
         if not self.connected:
             QMessageBox.information(self, "Reveal All Tiles", "SNI connection required to cheat.")
             return
@@ -410,7 +409,6 @@ class MainWindow(QMainWindow):
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.cheat_wanted = True
-            self._reveal()
 
     def _tabs_holding(self, option: str, items: Mapping[str, str]) -> set[str]:
         """The tabs whose dungeon's map, or compass, is held, if the option that has it reveal anything is on.
@@ -432,15 +430,15 @@ class MainWindow(QMainWindow):
         with_compass = self._tabs_holding("compass_reveals", COMPASSES)
         return [page for name, page in self.pages.items() if self.cheat_wanted or (name in with_compass and page.model.bosses_to_reveal())]
 
-    def _reveal(self) -> None:
-        """Ask the auto-tracker for the seed's own map, if any of it is to be shown: it has it from the game's ROM,
-        and hands it to seed_map_read."""
-        if self._rooms_for() or self._bosses_for():
-            self.seed_map_wanted = True
+    @property
+    def seed_map_wanted(self) -> bool:
+        """Whether any of the seed's own map is still to be shown. The auto-tracker looks at each reading: it has
+        the map from the game's ROM, and hands it to seed_map_read."""
+        return bool(self._rooms_for() or self._bosses_for())
 
     def seed_map_read(self, seed: seed_map.SeedMap) -> None:
-        """The seed's own map, from the auto-tracker, which was asked for it by _reveal. It is used and not kept:
-        the tracker has it for as long as it is reading that game."""
+        """The seed's own map, from the auto-tracker, which saw it was wanted. It is used and not kept: the tracker
+        has it for as long as it is reading that game. Nothing of it is wanted after."""
         rooms_for = self._rooms_for()
         if rooms_for:
             links = seed.links(self.settings["decoupled_doors"])
@@ -549,8 +547,6 @@ class MainWindow(QMainWindow):
             self.fps_label.setVisible(bool(value))
         for page in self.pages.values():
             page.option_changed(name)
-        if name in ("map_reveals", "compass_reveals"):
-            self._reveal()
         if name in COUNTED.values():
             for page in self.pages.values():
                 page.scene.update()
@@ -792,7 +788,7 @@ class MainWindow(QMainWindow):
     def _forget_game(self) -> None:
         """The map on screen is another one now, or another game's. What was read from the game before, and what
         was asked of it, is not for this one. A tracker file does not say what is held."""
-        self.cheat_wanted = self.seed_map_wanted = False
+        self.cheat_wanted = False
         if self._held is not None:
             self._held = None
             for page in self.pages.values():
@@ -814,7 +810,6 @@ class MainWindow(QMainWindow):
         if held != self._held:
             # This also puts back anything clicked in the items panel that the game does not agree with
             self.set_held(*held)
-        self._reveal()
 
     def drops_left(self, tile: rooms.Tile) -> list[Drop]:
         """The pots, and the enemies, of a supertile still to be had, of the kinds the toolbar says this seed makes

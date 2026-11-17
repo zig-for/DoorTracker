@@ -233,7 +233,7 @@ def test_what_was_read_from_a_game_or_asked_of_it_is_not_carried_to_another(wind
     window.seed_seen("aaaaaaaaaa")
     window.set_held(frozenset({"Hammer"}), {})
     # The cheat, asked for and not yet done
-    window.cheat_wanted = window.seed_map_wanted = True
+    window.cheat_wanted = True
     monkeypatch.setattr(window, "_ask", lambda *args: DoorsTracker.KEEP_MAP)
 
     if change == "a file is opened":
