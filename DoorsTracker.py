@@ -12,8 +12,8 @@ from typing import Any
 
 import yaml
 from PIL import Image
-from PySide6.QtCore import QByteArray, QSize, QStandardPaths, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter
+from PySide6.QtCore import QByteArray, QPointF, QSize, QStandardPaths, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -123,6 +123,24 @@ def read_autosave(file: Path) -> dict[str, Any]:
 COUNTED = {"pot": "pottery", "enemy": "enemy_drops"}
 # The items and small keys held until a game is read or the items panel clicked
 NOTHING_HELD: tuple[frozenset[str], dict[str, int]] = (STARTING_ITEMS, {})
+TAB_ARROW = QSize(8, 10)  # the arrow on the tab of the dungeon the player is in
+
+
+def tab_arrows(colour: QColor) -> tuple[QIcon, QIcon]:
+    """The arrow for a tab, and the same space with nothing in it."""
+    # Drawn larger than it is shown, which keeps its edges smooth on a dense screen
+    scale = 4
+    wide, tall = TAB_ARROW.width() * scale, TAB_ARROW.height() * scale
+    blank = QPixmap(wide, tall)
+    blank.fill(Qt.GlobalColor.transparent)
+    arrow = QPixmap(blank)
+    painter = QPainter(arrow)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(colour)
+    painter.drawPolygon(QPolygonF([QPointF(0, 0), QPointF(wide, tall / 2), QPointF(0, tall)]))
+    painter.end()
+    return QIcon(arrow), QIcon(blank)
 
 
 def autosave_name(seed_hash: str | None) -> str:
@@ -332,6 +350,11 @@ class MainWindow(QMainWindow):
             page = GraphPage(self, world, self.assets, use_gl=not args.no_gl)
             self.pages[dungeon] = page
             self.tabs.addTab(page, dungeon.replace("_", " "))
+        # The tab of the dungeon the player is in has an arrow. Every other tab has the arrow's space, so that no
+        # tab moves when the arrow does
+        self.tabs.setIconSize(TAB_ARROW)
+        self._tab_arrow, self._no_tab_arrow = tab_arrows(self.tabs.palette().color(QPalette.ColorRole.WindowText))
+        self.highlight_dungeon(None)
         if self.settings["tab"] in self.pages:
             self.select_dungeon(self.settings["tab"])
         self.tabs.currentChanged.connect(self._tab_changed)
@@ -935,8 +958,7 @@ class MainWindow(QMainWindow):
 
     def highlight_dungeon(self, name: str | None) -> None:
         for dungeon, page in self.pages.items():
-            label = dungeon.replace("_", " ")
-            self.tabs.setTabText(self.tabs.indexOf(page), f"▶ {label}" if dungeon == name else label)
+            self.tabs.setTabIcon(self.tabs.indexOf(page), self._tab_arrow if dungeon == name else self._no_tab_arrow)
 
     def select_dungeon(self, name: str) -> None:
         self.tabs.setCurrentWidget(self.pages[name])

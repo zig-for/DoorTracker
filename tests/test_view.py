@@ -106,3 +106,17 @@ def test_dragging_moves_the_whole_block_and_pins_nothing(window, app):
 
     QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ControlModifier, start + QPoint(60, 24))
     assert model.fixed == block
+
+
+def test_the_arrow_on_the_tab_of_the_players_dungeon_moves_no_tab(window, app):
+    bar = window.tabs.tabBar()
+
+    def places():
+        app.processEvents()
+        return [bar.tabRect(tab) for tab in range(bar.count())]
+
+    before = places()
+    window.highlight_dungeon("Eastern_Palace")
+    assert places() == before
+    with_arrow = [bar.tabText(tab) for tab in range(bar.count()) if bar.tabIcon(tab).cacheKey() == window._tab_arrow.cacheKey()]
+    assert with_arrow == ["Eastern Palace"]
