@@ -40,7 +40,7 @@ from gui.Doors import rooms, seed_map
 from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import DROPS, Drop, checks
 from gui.Doors.layout import REPEL_RANGE
-from gui.Doors.logic import COMPASSES, MAPS, items_held, small_keys
+from gui.Doors.logic import COMPASSES, MAPS, STARTING_ITEMS, items_held, small_keys
 from gui.qt.graph_page import Assets, GraphPage
 
 WINDOW_SIZES = {"small": (1064, 632), "medium": (1588, 888), "large": (2088, 1144)}
@@ -121,6 +121,8 @@ def read_autosave(file: Path) -> dict[str, Any]:
 
 # What a room counts down, by the save data's table of them -> the toolbar box that says to
 COUNTED = {"pot": "pottery", "enemy": "enemy_drops"}
+# The items and small keys held until a game is read or the items panel clicked
+NOTHING_HELD: tuple[frozenset[str], dict[str, int]] = (STARTING_ITEMS, {})
 
 
 def autosave_name(seed_hash: str | None) -> str:
@@ -292,7 +294,7 @@ class MainWindow(QMainWindow):
         # Checks collected, with pots emptied and enemy drops taken, by name in gui/Doors/checks.py; kept in the
         # tracker file
         self.collected: set[str] = set()
-        self._held: tuple[frozenset[str], dict[str, int]] | None = None  # the items and small keys last read or clicked
+        self._held: tuple[frozenset[str], dict[str, int]] = NOTHING_HELD  # the items and small keys last read or clicked
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.timeout.connect(self._save_after_change)
@@ -415,8 +417,7 @@ class MainWindow(QMainWindow):
 
         items: MAPS or COMPASSES.
         """
-        held = self._held[0] if self._held else frozenset()
-        return {tab for tab, item in items.items() if item in held} if self.settings[option] else set()
+        return {tab for tab, item in items.items() if item in self._held[0]} if self.settings[option] else set()
 
     def _rooms_for(self) -> list[GraphPage]:
         """The tabs to give their dungeon's rooms from the seed's own map: every tab for the cheat, and a tab
@@ -789,10 +790,8 @@ class MainWindow(QMainWindow):
         """The map on screen is another one now, or another game's. What was read from the game before, and what
         was asked of it, is not for this one. A tracker file does not say what is held."""
         self.cheat_wanted = False
-        if self._held is not None:
-            self._held = None
-            for page in self.pages.values():
-                page.set_items(None, {})
+        if self._held != NOTHING_HELD:
+            self.set_held(*NOTHING_HELD)
 
     def checks_read(self, memory: Mapping[str, bytes]) -> None:
         """The game's tables of what has been collected and the items held, as the auto-tracker just read them."""

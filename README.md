@@ -22,7 +22,7 @@ Rooms whose linked doorways fit together (a north door onto a south door, an eas
 
 Auto-tracking will track supertiles, links between doors and lobbies. Dark rooms are only visible if the player has a lamp or a torch lit, otherwise they are obscured. The card the player is in is outlined in red.
 
-Green doors are still unexplored, grey doors are linked. Hover anything to see its name in the toolbar. Hovering a room also fades every link that does not touch it. Lobbies hang off the door they lead to as a small entrance node.
+Green doors are still unexplored, grey doors are linked. An unexplored door is red if you cannot go through it with the items you hold, and hollow if no entrance on the map leads to it. Mouse over anything to see its name in the toolbar. Mousing over a room also fades every link that does not touch it. Lobbies hang off the door they lead to as a small entrance node.
 
 The map is kept between launches: it is saved a second after each change and when the tracker closes, and loaded again the next time it starts. Starting the tracker with a file on the command line loads that file instead. File -> New (Ctrl+N) starts an empty map that belongs to no seed; while auto-tracking is connected to a game it warns first, as the new map then replaces the one saved for that game's seed, and otherwise it asks first if the map on screen would be lost. Untick File -> Autosave to stop both the saving and the loading at launch. If an autosave cannot be read or written, a warning says so and Autosave is turned off until you tick it again or restart.
 
@@ -77,7 +77,7 @@ The toolbar is above the tabs: what it sets is the same in every tab. `Fit` and 
 - `Join fitting rooms` - Join rooms automatically as links are made. Turn it off to only join the links you middle click
 - View -> Show Checks - Draw each dungeon check as a square on its room (on by default)
   - Green: gettable. Grey: collected. Red: unreachable with current items. Hollow: no entrance on the map leads to it
-  - Key doors, bosses and dark rooms count as passable
+  - Key doors, bosses and dark rooms count as passable. A door you mark as a big key door takes the dungeon's big key
   - Click a square to mark it collected, right click to take that back
   - `Pottery`, `Enemy Drops` - Show how many pots and enemy drops are left in each room. Needs auto-tracking
   - Drops into a dungeon and the sanctuary mirror route show a question mark, and are not counted as a way in, until you use one or click it

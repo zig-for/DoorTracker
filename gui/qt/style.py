@@ -27,6 +27,7 @@ UNKNOWN_DUNGEON_COLOUR = "#666666"
 
 BACKGROUND = "#eef0f3"
 DOOR_OPEN = "#1fd655"
+BLOCKED = "#e0262c"  # a door or a check the player's items do not let them get to
 DOOR_LINKED = "#9aa0a6"
 DOOR_INTERIOR = "#1b2a8a"
 DOOR_SELECTED = "#ff9800"
@@ -34,6 +35,7 @@ PLAYER = "#e60000"
 EDGE_FADED = "#c9cdd4"
 WARP_COLOUR = "#7b4fc4"
 DROP_COLOUR = "#4a4f57"
+OUTLINE = "#111"  # around a door dot or a check
 
 
 @dataclass(frozen=True)
@@ -41,18 +43,18 @@ class DoorStyle:
     fill: str
     scale: float  # of DOOR_RADIUS
     outline: float  # width
+    edge: str = OUTLINE  # the outline's colour
 
 
 # How a door dot is drawn, by its state
 DOOR_STYLES = {
     DoorState.OPEN: DoorStyle(DOOR_OPEN, 1.0, 1.5),
+    DoorState.BLOCKED: DoorStyle(BLOCKED, 1.0, 1.5),
+    # Hollow, as a check the map does not lead to is
+    DoorState.UNROUTED: DoorStyle(OUTLINE, 1.0, 2, DOOR_OPEN),
     DoorState.LINKED: DoorStyle(DOOR_LINKED, 0.7, 1),
     DoorState.INTERIOR: DoorStyle(DOOR_INTERIOR, 0.7, 1),
 }
-
-
-CHECK_BLOCKED = "#e0262c"
-CHECK_OUTLINE = "#111"
 
 
 @dataclass(frozen=True)
@@ -63,13 +65,13 @@ class CheckStyle:
 
 # How a check's square is drawn until it is collected; then it is the grey of a linked door
 CHECK_STYLES = {
-    CheckState.OPEN: CheckStyle(DOOR_OPEN, CHECK_OUTLINE),
-    CheckState.BLOCKED: CheckStyle(CHECK_BLOCKED, CHECK_OUTLINE),
+    CheckState.OPEN: CheckStyle(DOOR_OPEN, OUTLINE),
+    CheckState.BLOCKED: CheckStyle(BLOCKED, OUTLINE),
     # Hollow: it may well be findable, but the map does not show the way yet
-    CheckState.UNROUTED: CheckStyle(CHECK_OUTLINE, DOOR_OPEN),
-    CheckState.UNROUTED_BLOCKED: CheckStyle(CHECK_OUTLINE, CHECK_BLOCKED),
+    CheckState.UNROUTED: CheckStyle(OUTLINE, DOOR_OPEN),
+    CheckState.UNROUTED_BLOCKED: CheckStyle(OUTLINE, BLOCKED),
 }
-CHECK_COLLECTED = CheckStyle(DOOR_LINKED, CHECK_OUTLINE)
+CHECK_COLLECTED = CheckStyle(DOOR_LINKED, OUTLINE)
 
 
 def dungeon_colour(dungeon: str | None) -> str:

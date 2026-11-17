@@ -88,6 +88,9 @@ def with_hearts(items: frozenset[str], count: int) -> frozenset[str]:
     return (items - frozenset(HEARTS)) | frozenset(HEARTS[:count])
 
 
+STARTING_ITEMS = with_hearts(frozenset(), FIRST_HEARTS)  # what is held until a game is read or the items panel clicked
+
+
 def items_held(save: bytes) -> frozenset[str]:
     """The items held, from the ITEMS_LENGTH bytes of save data at ITEMS_AT."""
 

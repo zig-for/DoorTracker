@@ -9,7 +9,7 @@ import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
 from gui.Doors.checks import DROPS
-from gui.Doors.logic import BITS, COMPASSES, ITEMS_AT, MAPS
+from gui.Doors.logic import BITS, COMPASSES, ITEMS_AT, MAPS, STARTING_ITEMS
 from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
 from support import VANILLA, a_rom, rom_reads
 
@@ -211,12 +211,25 @@ def test_checks_the_game_has_flagged_are_collected(window, app, monkeypatch):
 def test_the_items_the_game_holds_reach_every_tab(window, app, monkeypatch):
     tile, door = door_facing("No")
     in_game = reading(tile, door["x"], door["y"])
-    assert window.pages[TAB].model.items is None
+    assert window.pages[TAB].model.items == STARTING_ITEMS
 
     # The hammer, and the mitts, which also lift what the glove lifts
     play(window, app, monkeypatch, [("one", in_game), ("two", in_game)], equipment={0x34B: 1, 0x354: 2})
     for page in window.pages.values():
         assert page.model.items == {"Hammer", "Power Glove", "Titans Mitts"}
+
+
+def test_items_are_read_with_the_menu_up_and_not_with_no_file_loaded(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    # The game's mode for the file select, a byte that is no mode of the game's, and its mode for its menu and
+    # text boxes
+    for mode, read in (("01", False), ("55", False), ("0e", True)):
+        paused = reading(tile, door["x"], door["y"]) | {"gamemode": mode}
+        play(window, app, monkeypatch, [("one", paused), ("two", paused)], equipment={0x34B: 1})
+        model = window.pages[TAB].model
+        assert ("Hammer" in model.items) is read, mode
+        # The player is not followed in either
+        assert model.player is None, mode
 
 
 def test_falling_into_a_dungeon_by_a_drop_makes_the_drop_a_way_in(window, app, monkeypatch):
@@ -277,7 +290,7 @@ def test_a_map_opened_while_the_tracker_waits_for_a_read_gets_nothing_from_that_
     )
     assert window.seed_hash == "eeeeeeeeee"
     model = window.pages[TAB].model
-    assert tile not in model.tiles and model.player is None and window.collected == set() and model.items is None
+    assert tile not in model.tiles and model.player is None and window.collected == set() and model.items == STARTING_ITEMS
 
 
 def supertile_with_doors_facing(*facings):

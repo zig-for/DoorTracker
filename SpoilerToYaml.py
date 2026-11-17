@@ -90,7 +90,15 @@ def parse_doors(door_data):
                 doors[dungeon]["special_doors"][door.strip()] = door_type
                 doors[dungeon]["special_doors"][linked_door.strip()] = door_type
             else:
-                doors[dungeon]["special_doors"][door.strip()] = door_type
+                door = door.strip()
+                doors[dungeon]["special_doors"][door] = door_type
+                if door_type == "Big Key Door":
+                    # The randomizer mostly locks the door this one leads to as well, and the spoiler does not say
+                    # when it has not: it is taken as locked, unless the spoiler gives it a type of its own
+                    links = [(link["door"], link["linked_door"]) for found in doors.values() for link in found["door_links"]]
+                    far_side = next((b if a == door else a for a, b in links if door in (a, b)), None)
+                    if far_side is not None:
+                        doors[dungeon]["special_doors"].setdefault(far_side, door_type)
     return doors
 
 

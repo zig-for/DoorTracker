@@ -6,10 +6,11 @@ from PySide6.QtTest import QTest
 from data.doors_data import regions_to_doors
 from data.doors_sprite_data import REACHABLE
 from gui.Doors.checks import checks
-from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState
+from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState, DoorState
 from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, ORANGE, READABLE, holds, items_held, with_hearts
 from gui.Doors.rooms import DOORS, SPLIT, Node
 from gui.Doors.rules import check_regions, check_rules, passage_rules
+from gui.qt.style import BLOCKED, DOOR_OPEN
 from support import new_model
 
 
@@ -76,7 +77,6 @@ def test_items_are_read_from_the_save_data():
 def test_a_check_is_blocked_until_the_item_its_rule_names_is_held():
     name = "Thieves' Town - Big Chest"
     model = model_leading_to(name, "Thieves_Town")
-    assert model.check_state(name) is CheckState.OPEN  # no game read yet: nothing is known to be missing
     model.set_items(frozenset({"Big Key (Thieves Town)"}))
     assert model.check_state(name) is CheckState.BLOCKED
     model.set_items(frozenset({"Big Key (Thieves Town)", "Hammer"}))
@@ -103,6 +103,62 @@ def test_a_big_chest_takes_the_big_key_of_the_tab_it_is_on():
         assert model.check_state(name) is CheckState.BLOCKED, tab
         model.set_items(frozenset({key}))
         assert model.check_state(name) is CheckState.OPEN, tab
+
+
+def test_a_check_past_a_door_marked_as_a_big_key_door_is_blocked_until_the_big_key_is_held():
+    # The chest is down the stairs from the lobby
+    name = "Tower of Hera - Big Key Chest"
+    model = new_model("Tower_of_Hera")
+    model.add_tile(checks[name]["tile"], has_been_lit=True)
+    model.add_lobby_door("Hera Lobby S", "Tower_of_Hera")
+    model.add_link("Hera Lobby Key Stairs", "Hera Tile Room Up Stairs")
+    without = frozenset(READABLE - {"Big Key (Tower of Hera)"})
+    model.set_items(without)
+    assert model.check_state(name) is CheckState.OPEN
+    model.annotate("Hera Lobby Key Stairs", "Big Key Door", [])
+    assert model.check_state(name) is CheckState.BLOCKED
+    model.set_items(without | {"Big Key (Tower of Hera)"})
+    assert model.check_state(name) is CheckState.OPEN
+    # The mark is for its own side of the door
+    model.set_items(without)
+    model.remove_annotation("Hera Lobby Key Stairs")
+    model.annotate("Hera Tile Room Up Stairs", "Big Key Door", [])
+    assert model.check_state(name) is CheckState.OPEN
+
+
+def test_an_unlinked_door_is_unrouted_until_the_map_leads_to_it_and_blocked_until_the_player_can_go_out_by_it():
+    # Every way out of the hub is by the cane's platform
+    door = "TR Hub NE"
+    model = new_model("Turtle_Rock")
+    model.add_tile(DOORS[door].tile, has_been_lit=True)
+    model.update()
+    # Nothing leads to the room yet
+    assert model.door_state(door) is DoorState.UNROUTED
+    model.add_lobby_door("TR Hub SW", "Turtle_Rock")
+    model.update()
+    assert model.door_state(door) is DoorState.BLOCKED
+    model.set_items(frozenset({"Cane of Somaria"}))
+    assert model.door_state(door) is DoorState.OPEN
+
+
+def test_a_door_on_screen_changes_colour_when_the_items_held_do(window, app):
+    door = "TR Hub NE"
+    window.select_dungeon("Turtle_Rock")
+    page = window.pages["Turtle_Rock"]
+    page.model.add_tile(DOORS[door].tile, has_been_lit=True)
+    page.model.add_lobby_door("TR Hub SW", "Turtle Rock Main")
+    page.model.update()
+    page.rebuild()
+    page.fit_view()
+    app.processEvents()
+
+    def colour():
+        middle = page.view.mapFromScene(QPointF(*page.model.port(door)))
+        return page.view.grab().toImage().pixelColor(middle).name()
+
+    assert colour() == BLOCKED
+    window.set_held(frozenset({"Cane of Somaria"}), {})
+    assert colour() == DOOR_OPEN
 
 
 def test_a_check_past_a_passage_is_blocked_until_the_item_for_the_passage_is_held():
@@ -189,6 +245,7 @@ def test_a_fall_is_not_a_way_back_up():
         model = new_model("Ice_Palace")
         model.add_tile(checks[name]["tile"], has_been_lit=True)
         model.add_lobby_door("Ice Big Chest View ES", "Ice_Palace")
+        model.set_items(frozenset({"Fire Rod"}))  # to melt the freezor
         # A fall the tracker saw is kept as a link, either way round
         model.add_link(*fall)
         assert model.check_state(name) is CheckState.UNROUTED, fall

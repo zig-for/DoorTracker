@@ -74,6 +74,7 @@ from gui.qt.style import (
     DOOR_STYLES,
     DROP_COLOUR,
     EDGE_FADED,
+    OUTLINE,
     PLAYER,
     WARP_COLOUR,
     dungeon_colour,
@@ -600,13 +601,13 @@ class DoorsItem(QGraphicsItem):
                     painter.setPen(QColor(colour))
                     painter.drawText(corner.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, "?")
         for dot in self.dots:
-            style = DOOR_STYLES[dot.state]
-            fill, radius, outline = style.fill, DOOR_RADIUS * style.scale, style.outline
+            style = DOOR_STYLES[page.model.door_state(dot.door)]
+            fill, edge, radius, outline = style.fill, style.edge, DOOR_RADIUS * style.scale, style.outline
             if dot.door == page.selected_door:
-                fill, radius, outline = DOOR_SELECTED, DOOR_RADIUS + 1, 2
+                fill, edge, radius, outline = DOOR_SELECTED, OUTLINE, DOOR_RADIUS + 1, 2
             if dot.door == page.hot_door:
-                fill, radius, outline = PLAYER, DOOR_RADIUS + 1, 2
-            painter.setPen(QPen(QColor("#111"), outline))
+                fill, edge, radius, outline = PLAYER, OUTLINE, DOOR_RADIUS + 1, 2
+            painter.setPen(QPen(QColor(edge), outline))
             painter.setBrush(QColor(fill))
             painter.drawEllipse(QPointF(dot.x, dot.y), radius, radius)
         player = page.model.player
@@ -1193,8 +1194,8 @@ class GraphPage(QWidget):
         if self._settling_size and self.model.pos:
             self.fit_view()
 
-    def set_items(self, items: frozenset[str] | None, small_keys: Mapping[str, int]) -> None:
-        """What the player holds, as the auto-tracker just read it. small_keys: how many, by dungeon."""
+    def set_items(self, items: frozenset[str], small_keys: Mapping[str, int]) -> None:
+        """What the player holds. small_keys: how many, by dungeon."""
         self.model.set_items(items)
         self.items_panel.show_held(items, small_keys)
         self._place_items_panel()
@@ -1238,7 +1239,7 @@ class GraphPage(QWidget):
                 continue
             for dot in doors.dots:
                 distance = math.hypot(scene_pos.x() - x - dot.x, scene_pos.y() - y - dot.y)
-                if distance <= max(DOOR_RADIUS * DOOR_STYLES[dot.state].scale, reach) + 1 and distance < nearest:
+                if distance <= max(DOOR_RADIUS * DOOR_STYLES[model.door_state(dot.door)].scale, reach) + 1 and distance < nearest:
                     nearest, found = distance, dot.door
         return found
 
