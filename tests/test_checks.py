@@ -10,6 +10,7 @@ from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState, DoorState
 from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, ORANGE, READABLE, holds, items_held, with_hearts
 from gui.Doors.rooms import DOORS, SPLIT, Node
 from gui.Doors.rules import check_regions, check_rules, passage_rules
+from gui.qt.style import BLOCKED, DOOR_OPEN
 from support import new_model
 
 
@@ -131,17 +132,33 @@ def test_an_unlinked_door_is_unrouted_until_the_map_leads_to_it_and_blocked_unti
     model = new_model("Turtle_Rock")
     model.add_tile(DOORS[door].tile, has_been_lit=True)
     model.update()
-
-    def state():
-        return next(dot.state for dot in model.door_dots(model.rooms.node(door)) if dot.door == door)
-
     # Nothing leads to the room yet
-    assert state() is DoorState.UNROUTED
+    assert model.door_state(door) is DoorState.UNROUTED
     model.add_lobby_door("TR Hub SW", "Turtle_Rock")
     model.update()
-    assert state() is DoorState.BLOCKED
+    assert model.door_state(door) is DoorState.BLOCKED
     model.set_items(frozenset({"Cane of Somaria"}))
-    assert state() is DoorState.OPEN
+    assert model.door_state(door) is DoorState.OPEN
+
+
+def test_a_door_on_screen_changes_colour_when_the_items_held_do(window, app):
+    door = "TR Hub NE"
+    window.select_dungeon("Turtle_Rock")
+    page = window.pages["Turtle_Rock"]
+    page.model.add_tile(DOORS[door].tile, has_been_lit=True)
+    page.model.add_lobby_door("TR Hub SW", "Turtle Rock Main")
+    page.model.update()
+    page.rebuild()
+    page.fit_view()
+    app.processEvents()
+
+    def colour():
+        middle = page.view.mapFromScene(QPointF(*page.model.port(door)))
+        return page.view.grab().toImage().pixelColor(middle).name()
+
+    assert colour() == BLOCKED
+    window.set_held(frozenset({"Cane of Somaria"}), {})
+    assert colour() == DOOR_OPEN
 
 
 def test_a_check_past_a_passage_is_blocked_until_the_item_for_the_passage_is_held():

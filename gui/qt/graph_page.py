@@ -601,7 +601,7 @@ class DoorsItem(QGraphicsItem):
                     painter.setPen(QColor(colour))
                     painter.drawText(corner.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, "?")
         for dot in self.dots:
-            style = DOOR_STYLES[dot.state]
+            style = DOOR_STYLES[page.model.door_state(dot.door)]
             fill, edge, radius, outline = style.fill, style.edge, DOOR_RADIUS * style.scale, style.outline
             if dot.door == page.selected_door:
                 fill, edge, radius, outline = DOOR_SELECTED, OUTLINE, DOOR_RADIUS + 1, 2
@@ -1239,7 +1239,7 @@ class GraphPage(QWidget):
                 continue
             for dot in doors.dots:
                 distance = math.hypot(scene_pos.x() - x - dot.x, scene_pos.y() - y - dot.y)
-                if distance <= max(DOOR_RADIUS * DOOR_STYLES[dot.state].scale, reach) + 1 and distance < nearest:
+                if distance <= max(DOOR_RADIUS * DOOR_STYLES[model.door_state(dot.door)].scale, reach) + 1 and distance < nearest:
                     nearest, found = distance, dot.door
         return found
 

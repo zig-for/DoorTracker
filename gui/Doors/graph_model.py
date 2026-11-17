@@ -125,7 +125,6 @@ class DoorDot:
     door: str
     x: float  # relative to the node's centre, world units
     y: float
-    state: DoorState
 
 
 @dataclass(frozen=True)
@@ -1609,28 +1608,26 @@ class GraphModel:
 
     def door_dots(self, node: Node) -> list[DoorDot]:
         """The door dots drawn on a node."""
-        lobby_doors = set(self.lobby_door_names())
         dots = []
         for door in self.rooms.doors(node):
             if entrance_only(door):
                 continue
             if not self._door_visible(door):
                 continue
-            interior = door in INTERIOR_DOORS
-            if interior and node in self.compact:
+            if door in INTERIOR_DOORS and node in self.compact:
                 continue
-            linked = door in self._linked_doors or door in lobby_doors
-            ox, oy = self.port_offset(door)
-            if interior:
-                state = DoorState.INTERIOR
-            elif linked:
-                state = DoorState.LINKED
-            elif door not in self._routed_doors:
-                state = DoorState.UNROUTED
-            else:
-                state = DoorState.OPEN if door in self._passable_doors else DoorState.BLOCKED
-            dots.append(DoorDot(door, ox, oy, state))
+            dots.append(DoorDot(door, *self.port_offset(door)))
         return dots
+
+    def door_state(self, door: str) -> DoorState:
+        """How a door's dot is drawn, as far as the map and the player's items say."""
+        if door in INTERIOR_DOORS:
+            return DoorState.INTERIOR
+        if door in self._linked_doors or door in self.lobby_door_names():
+            return DoorState.LINKED
+        if door not in self._routed_doors:
+            return DoorState.UNROUTED
+        return DoorState.OPEN if door in self._passable_doors else DoorState.BLOCKED
 
     def boss_spots(self, node: Node) -> list[BossSpot]:
         """The boss drawn on a node, if it has a boss room. None on a pill, or on a dark room not yet seen lit."""
