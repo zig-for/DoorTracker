@@ -52,6 +52,12 @@ check_addresses = {
 }
 READINGS_PER_CHECK_READ = 10
 
+# The game's modes, as its main routine numbers them. With no file loaded the save data is not this game's: the
+# title, the file select and its screens, a file being loaded, and the game playing itself
+NO_FILE_MODES = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14}
+# The player walking about: in a dungeon or on the overworld, or either being loaded
+WALKING_MODES = range(0x06, 0x0B)
+
 
 def build_multi_request(add_space, mem_mapping, addresses=mem_addresses):
     requests = {}
@@ -277,24 +283,11 @@ async def _sni_session(
             if len(data_diff) != 0 and args.debug:
                 print(data_diff)
 
-            if stay.boss_just_killed:
-                if data["gamemode"] != "09":
-                    await asyncio.sleep(0.1)
-                    continue
-
-            # Are we even in game?
-            if int(data["gamemode"], 16) <= 0x5 or int(data["gamemode"], 16) >= 0x0B:
-                if data["gamemode"] == "16":
-                    stay.boss_just_killed = True
-                    await asyncio.sleep(0.1)
-                    continue
-                if data["mirror"] == "f7":
-                    stay.was_mirroring = True
-
+            mode = int(data["gamemode"], 16)
+            if mode in NO_FILE_MODES:
                 await asyncio.sleep(0.1)
                 continue
 
-            # Only in game: with no game running the bytes read are not a seed's.
             if data["seed_hash"] != game.seed_hash:
                 if game.seed_hash is not None:
                     # Another game was loaded and the connection stayed up. What is remembered is the old game's:
@@ -337,6 +330,24 @@ async def _sni_session(
             # If the checks just read are what made it wanted, it is not read from the ROM until the next reading
             if ui.seed_map_wanted and game.seed is not None:
                 ui.seed_map_read(game.seed)
+
+            # The rest follows the player from room to room, which is only done while they walk about: not with
+            # the menu or a text box up, nor while dying, warping or being handed a boss's prize
+            if stay.boss_just_killed:
+                if mode != 0x09:
+                    await asyncio.sleep(0.1)
+                    continue
+
+            if mode not in WALKING_MODES:
+                if mode == 0x16:
+                    stay.boss_just_killed = True
+                    await asyncio.sleep(0.1)
+                    continue
+                if data["mirror"] == "f7":
+                    stay.was_mirroring = True
+
+                await asyncio.sleep(0.1)
+                continue
 
             # if args.darkpos:
             #     is_dark = False

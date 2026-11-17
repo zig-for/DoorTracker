@@ -219,6 +219,18 @@ def test_the_items_the_game_holds_reach_every_tab(window, app, monkeypatch):
         assert page.model.items == {"Hammer", "Power Glove", "Titans Mitts"}
 
 
+def test_items_are_read_with_the_menu_up_and_not_with_no_file_loaded(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    # The game's mode for the file select, and for its menu and text boxes
+    for mode, read in (("01", False), ("0e", True)):
+        paused = reading(tile, door["x"], door["y"]) | {"gamemode": mode}
+        play(window, app, monkeypatch, [("one", paused), ("two", paused)], equipment={0x34B: 1})
+        model = window.pages[TAB].model
+        assert ("Hammer" in model.items) is read, mode
+        # The player is not followed in either
+        assert model.player is None, mode
+
+
 def test_falling_into_a_dungeon_by_a_drop_makes_the_drop_a_way_in(window, app, monkeypatch):
     castle = window.pages["Hyrule_Castle"].model
     assert castle.assumed("Sewer Drop")
