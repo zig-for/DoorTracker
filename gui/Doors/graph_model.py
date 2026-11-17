@@ -113,7 +113,7 @@ class Player:
 
 
 class DoorState(Enum):
-    OPEN = "open"  # not linked yet
+    OPEN = "open"  # not linked yet, and the player can go out by it
     BLOCKED = "blocked"  # not linked yet, and the player's items do not let them go out by it
     UNROUTED = "unrouted"  # not linked yet, and the map does not lead to it
     LINKED = "linked"  # linked, or an entrance

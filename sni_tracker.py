@@ -52,9 +52,10 @@ check_addresses = {
 }
 READINGS_PER_CHECK_READ = 10
 
-# The game's modes, as its main routine numbers them. With no file loaded the save data is not this game's: the
-# title, the file select and its screens, a file being loaded, and the game playing itself
-NO_FILE_MODES = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14}
+# The game's modes, as its main routine numbers them, that have a file loaded. In the others the save data is not
+# this game's: the title, the file select and its screens and a file being loaded (0x00 to 0x05), and the game
+# playing itself (0x14). 0x0C and 0x0D are not used, and a byte past 0x1B is not this game running
+FILE_MODES = set(range(0x06, 0x1C)) - {0x0C, 0x0D, 0x14}
 # The player walking about: in a dungeon or on the overworld, or either being loaded
 WALKING_MODES = range(0x06, 0x0B)
 
@@ -284,7 +285,7 @@ async def _sni_session(
                 print(data_diff)
 
             mode = int(data["gamemode"], 16)
-            if mode in NO_FILE_MODES:
+            if mode not in FILE_MODES:
                 await asyncio.sleep(0.1)
                 continue
 

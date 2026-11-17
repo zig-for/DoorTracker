@@ -221,8 +221,9 @@ def test_the_items_the_game_holds_reach_every_tab(window, app, monkeypatch):
 
 def test_items_are_read_with_the_menu_up_and_not_with_no_file_loaded(window, app, monkeypatch):
     tile, door = door_facing("No")
-    # The game's mode for the file select, and for its menu and text boxes
-    for mode, read in (("01", False), ("0e", True)):
+    # The game's mode for the file select, a byte that is no mode of the game's, and its mode for its menu and
+    # text boxes
+    for mode, read in (("01", False), ("55", False), ("0e", True)):
         paused = reading(tile, door["x"], door["y"]) | {"gamemode": mode}
         play(window, app, monkeypatch, [("one", paused), ("two", paused)], equipment={0x34B: 1})
         model = window.pages[TAB].model
