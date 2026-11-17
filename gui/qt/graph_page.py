@@ -96,6 +96,7 @@ MODEL_OPTIONS = {
 }
 WORLD = 1_000_000  # scene half-extent
 CHECK_SIZE = 9.0  # side of a check's square, world units
+PLAYER_HEAD = 16.0  # side of the player's head, world units: one for each of its pixels
 CHECK_EDGE = 1.5  # how much of the square shows round a picture in it
 POT_EDGE = 2.0  # and round a pot
 KEY_PICTURES = {"enemy": "Small Key", "big key": BIG_KEY_PICTURE}  # a dropped key's kind -> the randomizer's picture
@@ -614,9 +615,15 @@ class DoorsItem(QGraphicsItem):
         if player is not None and player.node == self.node and self.node not in page.model.compact:
             x = (player.x / 512 - 0.5) * THUMB
             y = (player.y / 512 - 0.5) * THUMB
-            painter.setPen(QPen(QColor(PLAYER), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            painter.drawLine(QPointF(x - 7, y - 7), QPointF(x + 7, y + 7))
-            painter.drawLine(QPointF(x + 7, y - 7), QPointF(x - 7, y + 7))
+            head = page.top.player_head()
+            if head is None:
+                painter.setPen(QPen(QColor(PLAYER), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                painter.drawLine(QPointF(x - 7, y - 7), QPointF(x + 7, y + 7))
+                painter.drawLine(QPointF(x + 7, y - 7), QPointF(x - 7, y + 7))
+            else:
+                # Much larger than it is in the room, to be found at a glance, and with its pixels kept square
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+                painter.drawPixmap(QRectF(x - PLAYER_HEAD / 2, y - PLAYER_HEAD / 2, PLAYER_HEAD, PLAYER_HEAD), head, QRectF(head.rect()))
 
 
 class IconItem(QGraphicsItem):

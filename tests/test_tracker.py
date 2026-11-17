@@ -8,6 +8,7 @@ import grpc
 import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
+from gui.Doors import link_sprite
 from gui.Doors.checks import DROPS
 from gui.Doors.logic import BITS, COMPASSES, ITEMS_AT, MAPS, STARTING_ITEMS
 from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
@@ -65,12 +66,13 @@ class PlaybackOver(grpc.aio.AioRpcError):
         pass
 
 
-def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None, during_check_read=None):
+def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None, during_check_read=None, sprite=None):
     """Feed the readings to the real loop. Returns the map's state as it was before each labelled reading, and at the end.
 
     collected: (table, room, mask) flags the game has set, for the tracker's reads of what has been collected.
     equipment: {address in save data: byte} for the items held.
     rom: what the ROM holds of the seed's map, as support.a_rom gives it.
+    sprite: what the ROM holds of the player's sprite, by name in link_sprite.READS. All zeros for what is not given.
     during_check_read: called while the tracker waits for its read of what has been collected.
     """
     model = window.pages[TAB].model
@@ -110,6 +112,9 @@ def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None
                 if during_check_read is not None:
                     during_check_read()
                 return Reply(responses=[Reply(data=bytes(tables[name])) for name in sni_tracker.check_addresses])
+            for name, (address, size) in link_sprite.READS.items():
+                if request.requests[0].requestAddress == address:
+                    return Reply(responses=[Reply(data=(sprite or {}).get(name, bytes(size)))])
             if rom is not None:
                 for name, (address, size) in rom_reads(rom).items():
                     if address <= request.requests[0].requestAddress < address + size:
@@ -230,6 +235,42 @@ def test_items_are_read_with_the_menu_up_and_not_with_no_file_loaded(window, app
         assert ("Hammer" in model.items) is read, mode
         # The player is not followed in either
         assert model.player is None, mode
+
+
+def test_the_player_is_drawn_with_the_head_of_the_games_own_sprite(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    here = reading(tile, door["x"], door["y"])
+    told = []
+    tell = window.player_sprite_read
+    monkeypatch.setattr(window, "player_sprite_read", lambda heads: (told.append(heads), tell(heads)))
+
+    # No game read, and then one whose sprite has nothing for a head: a cross
+    assert window.player_head() is None
+    play(window, app, monkeypatch, [("one", here), ("two", here), ("three", here)])
+    assert window.player_head() is None
+    # It is read once for a game
+    assert len(told) == 1
+
+    # A head of two pixels. Top left, in colour 1: the first bit of the first row's first bit plane, in the first
+    # tile. Bottom right, in colour 8: the last bit of the last row's fourth bit plane, in the fourth tile
+    top, bottom = bytearray(0x40), bytearray(0x40)
+    top[0] = 0x80
+    bottom[0x20 + 2 * 7 + 17] = 0x01
+    # Colour 1 is red in the green mail, green in the blue, blue in the red. Colour 8 is white in the green mail
+    palettes = bytearray(90)
+    palettes[0:2], palettes[30:32], palettes[60:62] = b"\x1f\x00", b"\xe0\x03", b"\x00\x7c"
+    palettes[14:16] = b"\xff\x7f"
+    sprite = {"head top": bytes(top), "head bottom": bytes(bottom), "palettes": bytes(palettes)}
+    play(window, app, monkeypatch, [("one", here), ("two", here)], sprite=sprite)
+
+    def pixel(x, y):
+        return window.player_head().toImage().pixelColor(x, y).getRgb()
+
+    assert (pixel(0, 0), pixel(15, 15), pixel(1, 0)) == ((248, 0, 0, 255), (248, 248, 248, 255), (0, 0, 0, 0))
+    window.set_held(frozenset({"Blue Mail"}), {})
+    assert pixel(0, 0) == (0, 248, 0, 255)
+    window.set_held(frozenset({"Blue Mail", "Red Mail"}), {})
+    assert pixel(0, 0) == (0, 0, 248, 255)
 
 
 def test_falling_into_a_dungeon_by_a_drop_makes_the_drop_a_way_in(window, app, monkeypatch):

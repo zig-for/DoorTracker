@@ -9,7 +9,7 @@ A getting started document, including screenshots, controls nd more technical de
 This tracker will auto-track dungeon layouts from the Doors branch of ALttPR using SNI.
 
 - When visiting a dungeon, that dungeons tab will be auto-selected
-- Players position is displayed as a red 'x'
+- The player's position is shown as the head of the game's own sprite, read from the ROM, in the colours of the mail worn. It is a red 'x' if the sprite has no head of its own
 - Unvisited supertiles are automatically added to the map
 - Entering or exiting a dungeon will automatically add a lobby to the door
 - Mirroring will add a lobby to the door mirrored to

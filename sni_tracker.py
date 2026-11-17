@@ -12,7 +12,7 @@ import grpc.aio
 import sni.sni_pb2 as sni_pb2
 import sni.sni_pb2_grpc as sni
 from data.doors_data import dark_tiles, door_coordinates, doors_data
-from gui.Doors import seed_map
+from gui.Doors import link_sprite, seed_map
 from gui.Doors.logic import DUNGEON_NUMBERS, ITEMS_AT, ITEMS_LENGTH
 
 # After gui.Doors.logic, which makes the randomizer importable
@@ -166,6 +166,8 @@ class TrackerUI(Protocol):
 
     def seed_map_read(self, seed: seed_map.SeedMap) -> None: ...
 
+    def player_sprite_read(self, heads: list[bytes]) -> None: ...  # as link_sprite.decode gives them
+
     def highlight_dungeon(self, name: str | None) -> None: ...
 
     def select_dungeon(self, name: str) -> None: ...
@@ -199,6 +201,7 @@ class Game:
     stay: Stay
     seed_hash: str | None = None  # None until the game is first read
     seed: seed_map.SeedMap | None = None  # the seed's own map, read from the ROM the first time the window asks
+    heads: list[bytes] | None = None  # the player's head as the game's sprite has it, read from the ROM once
     # These outlast leaving a dungeon
     was_transitioning: bool = False
     was_falling: bool = False
@@ -300,9 +303,11 @@ async def _sni_session(
             # another map while a read is waited for: seed_seen settles which map this game's readings go on, and
             # nothing is waited for between it and the last of them
             race = data["race"] == "01" and not forced_autotrack
-            checks = None
+            checks = heads = None
             # Nothing more is read of a race seed
             if not race:
+                if game.heads is None:
+                    heads = game.heads = link_sprite.decode(await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, link_sprite.READS))
                 if readings_to_check_read == 0:
                     readings_to_check_read = READINGS_PER_CHECK_READ
                     reply = await mem_stub.MultiRead(sni_pb2.MultiReadMemoryRequest(uri=dev_uri, requests=list(check_request.values())))
@@ -326,6 +331,8 @@ async def _sni_session(
                 ui.set_title("Janker Door Tracker -Auto-tracking Disabled")
                 break
 
+            if heads is not None:
+                ui.player_sprite_read(heads)
             if checks is not None:
                 ui.checks_read(checks)
             # If the checks just read are what made it wanted, it is not read from the ROM until the next reading

@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 from PIL import Image
 from PySide6.QtCore import QByteArray, QPointF, QSize, QStandardPaths, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPalette, QPixmap, QPolygonF
+from PySide6.QtGui import QAction, QColor, QIcon, QImage, QKeySequence, QPainter, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -36,7 +36,7 @@ from data.doors_data import dungeon_lobbies, eg_tile_multiuse
 from data.vanilla_data import vanilla_layout_optimized
 from data.worlds_data import World, dungeon_worlds
 from gui import files
-from gui.Doors import rooms, seed_map
+from gui.Doors import link_sprite, rooms, seed_map
 from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import DROPS, Drop, checks
 from gui.Doors.layout import REPEL_RANGE
@@ -313,6 +313,7 @@ class MainWindow(QMainWindow):
         # tracker file
         self.collected: set[str] = set()
         self._held: tuple[frozenset[str], dict[str, int]] = NOTHING_HELD  # the items and small keys last read or clicked
+        self._player_heads: list[QPixmap] = []  # see player_sprite_read
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.timeout.connect(self._save_after_change)
@@ -815,6 +816,23 @@ class MainWindow(QMainWindow):
         self.cheat_wanted = False
         if self._held != NOTHING_HELD:
             self.set_held(*NOTHING_HELD)
+
+    def player_sprite_read(self, heads: list[bytes]) -> None:
+        """The player's head in each mail's colours, as the auto-tracker read it from the game's ROM: see
+        link_sprite.decode. It is kept until another is read: it is the game's, not the map's."""
+        size = link_sprite.SIZE
+        # A sprite can have nothing for a head, where it is drawn all in its body: the player stays a cross
+        solid = any(heads[0][3::4])
+        self._player_heads = [QPixmap.fromImage(QImage(head, size, size, QImage.Format.Format_RGBA8888)) for head in heads] if solid else []
+        for page in self.pages.values():
+            page.scene.update()
+
+    def player_head(self) -> QPixmap | None:
+        """The picture to draw the player with, in the mail they wear. None for a cross."""
+        if not self._player_heads:
+            return None
+        items = self._held[0]
+        return self._player_heads[2 if "Red Mail" in items else 1 if "Blue Mail" in items else 0]
 
     def checks_read(self, memory: Mapping[str, bytes]) -> None:
         """The game's tables of what has been collected and the items held, as the auto-tracker just read them."""
