@@ -412,42 +412,44 @@ class MainWindow(QMainWindow):
             self.cheat_wanted = True
             self._reveal()
 
-    def _to_reveal(self) -> tuple[list[GraphPage], list[GraphPage], set[str]]:
-        """What of the seed's own map is to be shown: (the tabs to give their dungeon's rooms, the tabs to give
-        their boss rooms' bosses, the dungeons whose compass counts).
+    def _tabs_holding(self, option: str, items: Mapping[str, str]) -> set[str]:
+        """The tabs whose dungeon's map, or compass, is held, if the option that has it reveal anything is on.
 
-        The cheat asks for every tab's rooms. A tab gets its rooms once its dungeon's map is held, and its bosses
-        once its compass is, where those options are on.
+        items: MAPS or COMPASSES.
         """
-        items = self._held[0] if self._held else frozenset()
-        with_map = {tab for tab, item in MAPS.items() if item in items} if self.settings["map_reveals"] else set()
-        with_compass = {tab for tab, item in COMPASSES.items() if item in items} if self.settings["compass_reveals"] else set()
-        rooms_for = [page for name, page in self.pages.items() if self.cheat_wanted or (name in with_map and not page.model.revealed)]
-        bosses_for = [page for name, page in self.pages.items() if name in with_compass and page.model.has_boss_room()]
-        return rooms_for, bosses_for, with_compass
+        held = self._held[0] if self._held else frozenset()
+        return {tab for tab, item in items.items() if item in held} if self.settings[option] else set()
+
+    def _rooms_for(self) -> list[GraphPage]:
+        """The tabs to give their dungeon's rooms from the seed's own map: every tab for the cheat, and a tab
+        whose dungeon's map is held, until it has them."""
+        with_map = self._tabs_holding("map_reveals", MAPS)
+        return [page for name, page in self.pages.items() if self.cheat_wanted or (name in with_map and not page.model.revealed)]
+
+    def _bosses_for(self) -> list[GraphPage]:
+        """The tabs to give their boss rooms' bosses from the seed's own map: every tab for the cheat, and a tab
+        whose dungeon's compass is held, while it has a boss room that has not had its boss."""
+        with_compass = self._tabs_holding("compass_reveals", COMPASSES)
+        return [page for name, page in self.pages.items() if self.cheat_wanted or (name in with_compass and page.model.bosses_to_reveal())]
 
     def _reveal(self) -> None:
         """Ask the auto-tracker for the seed's own map, if any of it is to be shown: it has it from the game's ROM,
         and hands it to seed_map_read."""
-        rooms_for, bosses_for, _ = self._to_reveal()
-        if rooms_for or bosses_for:
+        if self._rooms_for() or self._bosses_for():
             self.seed_map_wanted = True
 
     def seed_map_read(self, seed: seed_map.SeedMap) -> None:
         """The seed's own map, from the auto-tracker, which was asked for it by _reveal. It is used and not kept:
         the tracker has it for as long as it is reading that game."""
-        rooms_for, bosses_for, with_compass = self._to_reveal()
+        rooms_for = self._rooms_for()
         if rooms_for:
             links = seed.links(self.settings["decoupled_doors"])
             for page in rooms_for:
-                mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[page.tab_world]}
-                # A map alone does not say which boss is where
-                page.show_seed(links, mine, seed.bosses if self.cheat_wanted or page.dungeon_name in with_compass else {})
-        self.cheat_wanted = False
-        # With its compass held a dungeon's bosses are known: each boss room on its tab has the seed's own, whatever
-        # was picked for it
-        for page in bosses_for:
+                page.show_seed(links, {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[page.tab_world]})
+        # After the rooms, which may have put a boss room on the map
+        for page in self._bosses_for():
             page.reveal_bosses(seed.bosses)
+        self.cheat_wanted = False
 
     def _option_toggled(self, checked: bool) -> None:
         """A menu option or a toolbar box, named after its setting, was toggled."""

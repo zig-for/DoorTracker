@@ -260,7 +260,7 @@ def test_no_room_is_laid_out_on_an_entrances_marker():
     # Skull Woods as in the original game: the room south of the first lobby would join on under its entrance
     seed = seed_map.decode(a_rom(VANILLA, default_one_way_connections))
     model = new_model("Skull_Woods")
-    model.show_seed(seed.links(decoupled=False), {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]}, seed.bosses)
+    model.show_seed(seed.links(decoupled=False), {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]})
     assert any(model.marker_boxes(node) for node in model.nodes())
     for node in model.nodes():
         x, y = model.pos[node]
@@ -296,9 +296,11 @@ def test_the_cheat_gives_each_tab_its_own_dungeon_as_the_seed_made_it():
         model = new_model(tab, vanilla_drops=False)
         model.add_tile(DOORS["Hera Lobby S"].tile, has_been_lit=True)  # what was on the map goes
         mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[model.tab_world]}
-        model.show_seed(seed.links(decoupled=False), mine, seed.bosses)
+        model.show_seed(seed.links(decoupled=False), mine)
+        model.reveal_bosses(seed.bosses)
         # With the doors as in the original game, that is the dungeon's own rooms, all lit, each boss room with its boss
         assert set(model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == tab}, tab
         assert set(model.bosses) == set(model.tiles) & set(BOSS_ROOMS), tab
+        assert not model.bosses_to_reveal()
         assert not any(model.is_hidden_dark(tile) for tile in model.tiles)
         assert set(mine.values()) <= {lobby.door for lobby in model.lobby_doors}

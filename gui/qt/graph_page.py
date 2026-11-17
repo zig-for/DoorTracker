@@ -1680,17 +1680,17 @@ class GraphPage(QWidget):
         else:
             self.scene.update()
 
-    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str], bosses: dict[Tile, str]) -> None:
+    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str]) -> None:
         """This tab's dungeon as the seed made it; see GraphModel.show_seed."""
-        self.model.show_seed(links, entrances, bosses)
+        self.model.show_seed(links, entrances)
         self._select(None)
         self._needs_fit = True
         self.rebuild()
 
     def reveal_bosses(self, bosses: dict[Tile, str]) -> None:
-        """Pick the seed's own boss for each boss room on this tab's map."""
-        if self.model.reveal_bosses(bosses):
-            self.rebuild()
+        """Give each boss room on this tab's map the seed's own boss; see GraphModel.reveal_bosses."""
+        self.model.reveal_bosses(bosses)
+        self.rebuild()
 
     def auto_light_tile(self, tile: Tile) -> None:
         """A dark supertile on the map has been seen lit."""

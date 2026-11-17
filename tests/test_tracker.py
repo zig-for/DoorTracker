@@ -355,11 +355,21 @@ def test_a_compass_alone_puts_the_seeds_boss_in_a_boss_room_already_on_the_map(w
     eastern.set_boss(boss_room, "Mothula")  # the player's guess, and wrong
     mapped = set(eastern.tiles)
     compasses_at, compass = BITS[COMPASSES["Eastern_Palace"]]
-    play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], equipment={compasses_at: compass}, rom=a_rom(VANILLA, default_one_way_connections))
+    given, give = [], window.seed_map_read
+    monkeypatch.setattr(window, "seed_map_read", lambda seed: given.append(seed) or give(seed))
+    # Long enough for what is held to be read three times
+    steps = [(f"reading {k}", reading(*here)) for k in range(25)]
+    play(window, app, monkeypatch, steps, equipment={compasses_at: compass}, rom=a_rom(VANILLA, default_one_way_connections))
 
     assert eastern.bosses == {boss_room: "Armos Knights"}
     # The rooms are as the player mapped them: that takes the map
     assert set(eastern.tiles) == mapped and not eastern.revealed
+    # The seed's map was asked for once: the room has had its boss, and the player can pick another for it
+    assert len(given) == 1
+    # A boss room that comes onto the map later has not: here one of Ganon's Tower's, as a seed can join them
+    eastern.add_tile((12, 1), has_been_lit=True)
+    window._reveal()
+    assert window.seed_map_wanted
 
 
 def test_a_dungeons_map_reveals_its_rooms_and_its_compass_its_boss(window, app, monkeypatch):
