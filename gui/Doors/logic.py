@@ -16,9 +16,13 @@ from ALttPDoorRandomizer.InitialSram import InitialSram  # noqa: E402
 # those crystal barriers down
 Rule = bool | str | tuple
 
-# The part of the game's save data that holds the equipment
+# The part of the game's save data that holds the equipment, and after it how far the story has got
 ITEMS_AT = 0x340
-ITEMS_LENGTH = 0x4F
+PROGRESS_AT = 0x3C5
+ITEMS_LENGTH = PROGRESS_AT + 1 - ITEMS_AT
+# Not an item: the randomizer's name for Zelda having been brought to the sanctuary. The game's progress is 2 from
+# then on, and a seed that is not standard starts with it there (init_open_mode_sram in Rom.py)
+ZELDA_DELIVERED = "Zelda Delivered"
 
 # What the randomizer gives a starting item by: item -> (address in save data, value) for an item with a slot of
 # its own, item -> (address, bit) for the big keys among others, and small key -> the addresses its count is kept
@@ -88,7 +92,8 @@ def with_hearts(items: frozenset[str], count: int) -> frozenset[str]:
     return (items - frozenset(HEARTS)) | frozenset(HEARTS[:count])
 
 
-STARTING_ITEMS = with_hearts(frozenset(), FIRST_HEARTS)  # what is held until a game is read or the items panel clicked
+# What is held until a game is read or the items panel clicked. With no game to say, the seed is not taken as standard
+STARTING_ITEMS = with_hearts(frozenset({ZELDA_DELIVERED}), FIRST_HEARTS)
 
 
 def items_held(save: bytes) -> frozenset[str]:
@@ -102,6 +107,8 @@ def items_held(save: bytes) -> frozenset[str]:
     held |= {item for item, (address, bit) in BITS.items() if at(address) & bit}
     if any(at(address) for address in BOTTLES_AT):
         held.add(BOTTLE)
+    if at(PROGRESS_AT) >= 2:
+        held.add(ZELDA_DELIVERED)
     return with_hearts(frozenset(held), at(HEALTH_AT) // 8)
 
 

@@ -77,7 +77,7 @@ The toolbar is above the tabs: what it sets is the same in every tab. `Fit` and 
 - `Join fitting rooms` - Join rooms automatically as links are made. Turn it off to only join the links you middle click
 - View -> Show Checks - Draw each dungeon check as a square on its room (on by default)
   - Green: gettable. Grey: collected. Red: unreachable with current items. Hollow: no entrance on the map leads to it
-  - Key doors, bosses and dark rooms count as passable. A door you mark as a big key door takes the dungeon's big key
+  - Key doors, bosses and dark rooms count as passable. A door you mark as a big key door takes the dungeon's big key, as do Zelda's cell and Blind's. In a standard seed, as read from the game, the way behind the throne room's tapestry is closed until Zelda is delivered or can be fetched from her cell
   - Click a square to mark it collected, right click to take that back
   - `Pottery`, `Enemy Drops` - Show how many pots and enemy drops are left in each room. Needs auto-tracking
   - Drops into a dungeon and the sanctuary mirror route show a question mark, and are not counted as a way in, until you use one or click it

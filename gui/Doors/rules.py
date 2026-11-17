@@ -9,19 +9,23 @@ Only what holds in every seed is kept. A rule set under an "if" depends on the s
 rooms; and the tracker cannot read events like "Open Floodgate". All of those count as met, so a rule here never
 asks for more than the randomizer does. Which boss is in a boss room depends on the seed too: what beating each
 takes is read from Bosses.py, for the room's boss once the player has picked it (gui/Doors/bosses.py).
+
+One setting can be told from the game: a standard seed is one where Zelda has not been delivered yet. The rules
+standard_rules sets are kept as holding until she is.
 """
 
 import ast
 
 from data.doors_data import regions_to_doors
 from gui.Doors.checks import checks
-from gui.Doors.logic import BLUE, EITHER, HEARTS, ORANGE, READABLE, Rule
+from gui.Doors.logic import BLUE, EITHER, HEARTS, ORANGE, READABLE, ZELDA_DELIVERED, Rule
 from gui.Doors.randomizer import dungeon_regions, syntax
 
 # After gui.Doors.randomizer, which makes the randomizer importable
 from ALttPDoorRandomizer import Doors, Rules  # noqa: E402
 from ALttPDoorRandomizer.BaseClasses import CollectionState  # noqa: E402
 from ALttPDoorRandomizer.Bosses import boss_table  # noqa: E402
+from ALttPDoorRandomizer.DungeonGenerator import special_big_key_doors  # noqa: E402
 from ALttPDoorRandomizer.Regions import location_events  # noqa: E402  location -> the event it gives
 
 # The randomizer's functions whose rules do not depend on the seed's settings, in the order it has them: a later
@@ -146,8 +150,9 @@ def spot(node: ast.AST, loop: dict[str, list[str]]) -> list[tuple[str, str]]:
     return [(kind, name) for name in names]
 
 
-def read_rules(reader: Reader) -> dict[tuple[str, str], Rule]:
-    """(kind, name) -> rule, for every rule set outright or in a loop over a list of names."""
+def read_rules(reader: Reader, functions: tuple) -> dict[tuple[str, str], Rule]:
+    """(kind, name) -> rule, for every rule these functions of the randomizer set outright or in a loop over a list
+    of names."""
     found: dict[tuple[str, str], Rule] = {}
     lists: dict[str, list[str]] = {}
 
@@ -165,7 +170,7 @@ def read_rules(reader: Reader) -> dict[tuple[str, str], Rule]:
                 rule = reader.rule(node.value.args[1])
                 found[key] = rule if called(node.value) == "set_rule" else combine("all", [found.get(key, True), rule])
 
-    for function in FUNCTIONS:
+    for function in functions:
         for node in syntax(function).body:
             statement(node, {})
     return found
@@ -181,8 +186,15 @@ def read() -> tuple[dict[str, Rule], dict[str, Rule], dict[str, str], dict[str, 
     # reached. Event -> where it is done
     gives = location_events
     done_at = {event: location for location, event in gives.items() if list(gives.values()).count(event) == 1 and location in where}
+    # Whether Zelda has been delivered is read from the game
+    del done_at[ZELDA_DELIVERED]
 
-    found = read_rules(Reader(set(done_at)))
+    reader = Reader({*done_at, ZELDA_DELIVERED})
+    found = read_rules(reader, FUNCTIONS)
+    # A standard seed's rules hold until Zelda is delivered, and a seed that is not standard starts with her
+    # delivered. The one that matters here: the way behind the throne room's tapestry takes having her along
+    for key, rule in read_rules(reader, (Rules.standard_rules,)).items():
+        found[key] = combine("all", [found.get(key, True), combine("any", [ZELDA_DELIVERED, rule])])
     walked = {name for names in regions_to_doors.values() for name in names}
     passages = {name: rule for (kind, name), rule in found.items() if kind == "get_entrance" and name in walked and rule is not True}
     of_checks = {name: rule for (kind, name), rule in found.items() if kind == "get_location" and name in checks and rule is not True}
@@ -239,3 +251,6 @@ def read_bosses() -> dict[str, tuple[Rule, Rule]]:
 passage_rules, check_rules, check_regions, events = read()
 crystals = read_crystals()
 boss_rules = read_bosses()
+# The passages that take the big key of the dungeon they are in, in every seed: into Zelda's cell and into Blind's.
+# The randomizer gives them the rule with a seed's big key doors, which is why Rules.py does not set it
+big_key_passages = frozenset(special_big_key_doors)

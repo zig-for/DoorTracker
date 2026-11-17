@@ -31,7 +31,7 @@ from gui.Doors.bosses import BOSS_ROOMS, beating
 from gui.Doors.checks import BIG_KEY_DROPS, Drop, checks
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, STARTING_ITEMS, holds
-from gui.Doors.rules import check_regions, check_rules, crystals, events, passage_rules
+from gui.Doors.rules import big_key_passages, check_regions, check_rules, crystals, events, passage_rules
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
@@ -927,7 +927,7 @@ class GraphModel:
 
         A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met,
         out of a boss room whose boss the player has picked, when that boss can be beaten, and by a door marked
-        as a big key door, when the big key is held.
+        as a big key door or into Zelda's cell or Blind's, when the big key is held.
         What is reached stays reached. A rule can ask for a region reached, so every way out is tried again until
         no more is reached. Only then is what got done on the way counted, and every way out tried again: a rule
         can ask for something not done, and is asked before it is.
@@ -942,9 +942,10 @@ class GraphModel:
         queue: deque[str] = deque()
         # Way out of a boss room -> what going past the boss picked for the room takes
         beaten = {way: beating(tile, boss, self.dungeon_name) for tile, boss in self.bosses.items() if tile in BOSS_ROOMS for way in BOSS_ROOMS[tile].ways}
-        # A door marked as a big key door takes the big key of the dungeon it is in, as a big chest does. The mark
-        # is for its own side, as the randomizer has it: the door it is linked to is locked only if marked too
-        locked = {door for door, icon in self.special_doors.items() if icon == "Big Key Door"}
+        # A door marked as a big key door takes the big key of the dungeon it is in, as a big chest does, and so
+        # do the ways into the two cells. The mark is for its own side, as the randomizer has it: the door it is
+        # linked to is locked only if marked too
+        locked = big_key_passages | {door for door, icon in self.special_doors.items() if icon == "Big Key Door"}
         big_key = BIG_KEYS[self.dungeon_name]
 
         def arrive(name: str, down: int) -> None:

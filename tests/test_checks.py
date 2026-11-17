@@ -72,6 +72,9 @@ def test_items_are_read_from_the_save_data():
         save[address - ITEMS_AT] = value
     held = {"Hammer", "Power Glove", "Titans Mitts", "Blue Shield", "Red Shield", "Red Boomerang", "Bottle", "Bombs"}
     assert items_held(bytes(save)) == held | {"Big Key (Thieves Town)", "Big Key (Turtle Rock)"} | set(HEARTS[:5])
+    # The game's progress, at what it is once Zelda is in the sanctuary
+    save[0x3C5 - ITEMS_AT] = 2
+    assert "Zelda Delivered" in items_held(bytes(save))
 
 
 def test_a_check_is_blocked_until_the_item_its_rule_names_is_held():
@@ -124,6 +127,41 @@ def test_a_check_past_a_door_marked_as_a_big_key_door_is_blocked_until_the_big_k
     model.remove_annotation("Hera Lobby Key Stairs")
     model.annotate("Hera Tile Room Up Stairs", "Big Key Door", [])
     assert model.check_state(name) is CheckState.OPEN
+
+
+def test_the_chests_in_the_two_cells_take_the_big_key():
+    cells = (
+        ("Thieves' Town - Blind's Cell", "Thieves_Town", "Thieves Blind's Cell WS", "Big Key (Thieves Town)"),
+        ("Hyrule Castle - Zelda's Chest", "Hyrule_Castle", "Hyrule Dungeon Cellblock Up Stairs", "Big Key (Escape)"),
+    )
+    for name, tab, way_in, key in cells:
+        model = new_model(tab)
+        model.add_tile(checks[name]["tile"], has_been_lit=True)
+        model.add_lobby_door(way_in, tab)
+        model.update()
+        assert model.check_state(name) is CheckState.BLOCKED, name
+        model.set_items(frozenset({key}))
+        assert model.check_state(name) is CheckState.OPEN, name
+
+
+def test_the_throne_rooms_tapestry_is_closed_in_a_standard_seed_until_zelda_can_be_fetched():
+    behind = "Hyrule Castle Throne Room N"
+    model = new_model("Hyrule_Castle")
+    model.add_tile(DOORS[behind].tile, has_been_lit=True)
+    model.add_lobby_door("Hyrule Castle Throne Room South Stairs", "Hyrule_Castle")
+    model.update()
+    # No game has been read: the seed is not taken as standard
+    assert model.door_state(behind) is DoorState.OPEN
+    # A standard seed's game, before Zelda is delivered
+    model.set_items(frozenset())
+    assert model.door_state(behind) is DoorState.BLOCKED
+    # A way to her cell, and then the big key that opens it
+    model.add_tile(checks["Hyrule Castle - Zelda's Chest"]["tile"], has_been_lit=True)
+    model.add_lobby_door("Hyrule Dungeon Cellblock Up Stairs", "Hyrule_Castle")
+    model.update()
+    assert model.door_state(behind) is DoorState.BLOCKED
+    model.set_items(frozenset({"Big Key (Escape)"}))
+    assert model.door_state(behind) is DoorState.OPEN
 
 
 def test_an_unlinked_door_is_unrouted_until_the_map_leads_to_it_and_blocked_until_the_player_can_go_out_by_it():
