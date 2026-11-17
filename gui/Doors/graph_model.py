@@ -9,7 +9,7 @@ Save format is compatible with the original grid tracker.
 import math
 import random
 from collections import defaultdict, deque
-from collections.abc import Container
+from collections.abc import Container, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -28,7 +28,7 @@ from data.doors_sprite_data import REACHABLE
 from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
 from gui.Doors.bosses import BOSS_ROOMS, beating
-from gui.Doors.checks import BIG_KEY_DROPS, checks
+from gui.Doors.checks import BIG_KEY_DROPS, Drop, checks
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, holds
 from gui.Doors.rules import check_regions, check_rules, crystals, events, passage_rules
@@ -219,7 +219,9 @@ class GraphModel:
         self.door_links: list[Link] = []
         self.lobby_doors: list[LobbyDoor] = []
         self.special_doors: dict[str, str] = {}  # door -> icon
-        self.bosses: dict[Tile, str] = {}  # boss room -> the boss the player picked for it
+        self.bosses: dict[Tile, str] = {}  # boss room -> its boss, as the player picked it or as the seed has it
+        self.bosses_revealed: set[Tile] = set()  # the boss rooms that have had the seed's own boss: see reveal_bosses
+        self.revealed = False  # the map is the seed's own, put here by show_seed
         self.kept_expanded: set[Node] = set()  # see toggle_expanded
         self.sanc_dungeon = False
 
@@ -502,18 +504,18 @@ class GraphModel:
         self.update()
         return True
 
-    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str], bosses: dict[Tile, str]) -> None:
-        """A cheat: this tab's dungeon as the seed made it, in place of the map that was there.
+    def show_seed(self, links: list[tuple[str, str]], entrances: dict[str, str]) -> None:
+        """This tab's dungeon as the seed made it, in place of the map that was there.
 
         links: the doors the seed joined, in every dungeon, as (door, the door it leads to).
         entrances: this dungeon's own, by name -> the door each comes in by.
-        bosses: every boss room's boss. The ones in this dungeon are picked for their rooms.
         What can be walked to from the entrances is this dungeon: the links there are kept, and every room is lit.
+        A boss room still on the map keeps its boss.
         """
-        used = self.used_entrances
+        used, bosses, bosses_revealed = self.used_entrances, self.bosses, self.bosses_revealed
         notes = {door: icon for door, icon in self.special_doors.items() if door not in self.lobby_door_names()}
         self.reset()
-        self.used_entrances = used
+        self.used_entrances, self.revealed = used, True
         for name, door in entrances.items():
             self.add_lobby_door(door, name)
         self.door_links = [Link(door, leads_to) for door, leads_to in links]
@@ -529,7 +531,22 @@ class GraphModel:
         for state in self.tiles.values():
             state.has_been_lit = True
         self.bosses = {tile: boss for tile, boss in bosses.items() if tile in self.tiles}
+        self.bosses_revealed = bosses_revealed & set(self.tiles)
         self.relayout()
+        self._find_reach()
+
+    def bosses_to_reveal(self) -> bool:
+        """Whether a boss room on the map has not had the seed's own boss: see reveal_bosses."""
+        return any(tile in BOSS_ROOMS and tile not in self.bosses_revealed for tile in self.tiles)
+
+    def reveal_bosses(self, bosses: dict[Tile, str]) -> None:
+        """Give each boss room on the map the seed's own boss, in place of any picked for it.
+
+        bosses: boss rooms' bosses, as the seed has them.
+        """
+        rooms = {tile for tile in self.tiles if tile in BOSS_ROOMS}
+        self.bosses |= {tile: bosses[tile] for tile in rooms if tile in bosses}
+        self.bosses_revealed |= rooms
         self._find_reach()
 
     def add_tile(
@@ -561,6 +578,7 @@ class GraphModel:
         for door in doors:
             self.special_doors.pop(door, None)
         self.bosses.pop(tile, None)
+        self.bosses_revealed.discard(tile)
         del self.tiles[tile]
         for node in [n for n in self.pos if n.tile == tile]:
             del self.pos[node]
@@ -647,10 +665,12 @@ class GraphModel:
                 self._join_rank[self.door_links[n]] = rank
         self.lobby_doors = [LobbyDoor(x["door"], x["lobby"]) for x in data.get("lobby_doors", [])]
         self.special_doors = dict(data.get("special_doors", {}))
+        self.revealed = bool(data.get("revealed"))
         self.bosses = {}
         for key, boss in (data.get("bosses") or {}).items():
             column, row = str(key).split("__")
             self.bosses[(int(column), int(row))] = boss
+        self.bosses_revealed = {(int(column), int(row)) for column, row in (key.split("__") for key in data.get("bosses_revealed") or [])}
         self.used_entrances = set(data.get("used_entrances") or [])
         self.tiles = {}
         self.pos = {}
@@ -733,6 +753,8 @@ class GraphModel:
             ),
             "special_doors": dict(self.special_doors),
             "bosses": {f"{x}__{y}": boss for (x, y), boss in self.bosses.items()},
+            "bosses_revealed": sorted(f"{x}__{y}" for x, y in self.bosses_revealed),
+            "revealed": self.revealed,
             "used_entrances": sorted(self.used_entrances),
             "expanded": sorted(f"{n.x}__{n.y}__{n.part}" for n in self.kept_expanded),
             "graph_layout": {
@@ -1611,6 +1633,14 @@ class GraphModel:
         else:
             self.bosses[tile] = boss
         self._find_reach()
+
+    def drops_on(self, node: Node, drops: Sequence[Drop]) -> list[Drop]:
+        """Those of a supertile's pots and enemies that are on a node. None on a pill, or on a dark room not yet
+        seen lit. In a split supertile each is on the part it is drawn in."""
+        if node in self.compact or self.is_hidden_dark(node.tile):
+            return []
+        split = self.rooms.part_count(node.tile) > 1
+        return [drop for drop in drops if not split or self.player_node(node.tile, drop.x, drop.y) == node]
 
     def check_spots(self, node: Node) -> list[CheckSpot]:
         """The checks drawn on a node. None on a pill, or on a dark room not yet seen lit."""

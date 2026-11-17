@@ -38,9 +38,9 @@ from data.worlds_data import World, dungeon_worlds
 from gui import files
 from gui.Doors import rooms, seed_map
 from gui.Doors.bosses import BOSSES
-from gui.Doors.checks import checks
+from gui.Doors.checks import DROPS, Drop, checks
 from gui.Doors.layout import REPEL_RANGE
-from gui.Doors.logic import items_held, small_keys
+from gui.Doors.logic import COMPASSES, MAPS, items_held, small_keys
 from gui.qt.graph_page import Assets, GraphPage
 
 WINDOW_SIZES = {"small": (1064, 632), "medium": (1588, 888), "large": (2088, 1144)}
@@ -77,6 +77,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "simulate": False,
     "follow_player": False,
     "labels": True,
+    "map_reveals": False,
+    "compass_reveals": False,
+    "pottery": False,
+    "enemy_drops": False,
 }
 
 
@@ -113,6 +117,10 @@ def read_autosave(file: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("not a tracker file")
     return data
+
+
+# What a room counts down, by the save data's table of them -> the toolbar box that says to
+COUNTED = {"pot": "pottery", "enemy": "enemy_drops"}
 
 
 def autosave_name(seed_hash: str | None) -> str:
@@ -281,7 +289,9 @@ class MainWindow(QMainWindow):
         self._latest: str | None = None  # autosave file the next launch loads, as LATEST says
         self.autosave_on: bool = self.settings["autosave"]  # File -> Autosave, for this run
         self.seed_hash: str | None = None  # of the game the map was made on, once known; kept in the tracker file
-        self.collected: set[str] = set()  # checks collected, by name in gui/Doors/checks.py; kept in the tracker file
+        # Checks collected, with pots emptied and enemy drops taken, by name in gui/Doors/checks.py; kept in the
+        # tracker file
+        self.collected: set[str] = set()
         self._held: tuple[frozenset[str], dict[str, int]] | None = None  # the items and small keys last read or clicked
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -296,7 +306,7 @@ class MainWindow(QMainWindow):
             self.resize(*WINDOW_SIZES[args.size or "medium"])
         self.device: str | None = None
         self.connected = False  # the auto-tracker is reading from a device
-        self.seed_map_wanted = False  # the cheat was asked for: the auto-tracker reads the ROM and calls seed_map_read
+        self.cheat_wanted = False  # the cheat was asked for, and has not been done yet
         self._adopt_seed = False  # see new_map
         self.sni_task: asyncio.Task | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -386,7 +396,7 @@ class MainWindow(QMainWindow):
         self.current_page().relayout()
 
     def _reveal_all(self) -> None:
-        """The cheat: ask the auto-tracker for the seed's own map; seed_map_read gets it."""
+        """The cheat: every tab gets its dungeon from the seed's own map; see seed_map_wanted."""
         if not self.connected:
             QMessageBox.information(self, "Reveal All Tiles", "SNI connection required to cheat.")
             return
@@ -398,15 +408,46 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            self.seed_map_wanted = True
+            self.cheat_wanted = True
 
-    def seed_map_read(self, memory: Mapping[str, bytes]) -> None:
-        """The parts of the ROM that say what the seed did with the doors, as the auto-tracker just read them."""
-        seed = seed_map.decode(memory)
-        links = seed.links(self.settings["decoupled_doors"])
-        for page in self.pages.values():
-            mine = {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[page.tab_world]}
-            page.show_seed(links, mine, seed.bosses)
+    def _tabs_holding(self, option: str, items: Mapping[str, str]) -> set[str]:
+        """The tabs whose dungeon's map, or compass, is held, if the option that has it reveal anything is on.
+
+        items: MAPS or COMPASSES.
+        """
+        held = self._held[0] if self._held else frozenset()
+        return {tab for tab, item in items.items() if item in held} if self.settings[option] else set()
+
+    def _rooms_for(self) -> list[GraphPage]:
+        """The tabs to give their dungeon's rooms from the seed's own map: every tab for the cheat, and a tab
+        whose dungeon's map is held, until it has them."""
+        with_map = self._tabs_holding("map_reveals", MAPS)
+        return [page for name, page in self.pages.items() if self.cheat_wanted or (name in with_map and not page.model.revealed)]
+
+    def _bosses_for(self) -> list[GraphPage]:
+        """The tabs to give their boss rooms' bosses from the seed's own map: every tab for the cheat, and a tab
+        whose dungeon's compass is held, while it has a boss room that has not had its boss."""
+        with_compass = self._tabs_holding("compass_reveals", COMPASSES)
+        return [page for name, page in self.pages.items() if self.cheat_wanted or (name in with_compass and page.model.bosses_to_reveal())]
+
+    @property
+    def seed_map_wanted(self) -> bool:
+        """Whether any of the seed's own map is still to be shown. The auto-tracker looks at each reading: it has
+        the map from the game's ROM, and hands it to seed_map_read."""
+        return bool(self._rooms_for() or self._bosses_for())
+
+    def seed_map_read(self, seed: seed_map.SeedMap) -> None:
+        """The seed's own map, from the auto-tracker, which saw it was wanted. It is used and not kept: the tracker
+        has it for as long as it is reading that game. Nothing of it is wanted after."""
+        rooms_for = self._rooms_for()
+        if rooms_for:
+            links = seed.links(self.settings["decoupled_doors"])
+            for page in rooms_for:
+                page.show_seed(links, {name: door for name, door in seed.entrances.items() if name in dungeon_lobbies[page.tab_world]})
+        # After the rooms, which may have put a boss room on the map
+        for page in self._bosses_for():
+            page.reveal_bosses(seed.bosses)
+        self.cheat_wanted = False
 
     def _option_toggled(self, checked: bool) -> None:
         """A menu option or a toolbar box, named after its setting, was toggled."""
@@ -470,6 +511,11 @@ class MainWindow(QMainWindow):
         add_box("simulate", "Simulate")
         add_box("follow_player", "Follow player")
         add_box("labels", "Labels")
+        add_box("map_reveals", "Map reveals rooms", "Once a dungeon's map is held, its tab gets its rooms, links and entrances from the game")
+        add_box("compass_reveals", "Compass reveals bosses", "Once a dungeon's compass is held, each boss room on its tab shows its boss")
+        # Named as the randomizer names the settings they are for
+        add_box("pottery", "Pottery", "For a seed with Pottery set to Dungeon Pots or Lottery: each room counts down its pots not yet emptied")
+        add_box("enemy_drops", "Enemy Drops", "For a seed with Enemy Drops set to Underworld Enemies: each room counts down its enemies' drops not yet taken")
         self.status = QLabel("")  # what the mouse is over
         self.status.setMinimumWidth(50)
         row.addWidget(self.status, 1)
@@ -501,6 +547,9 @@ class MainWindow(QMainWindow):
             self.fps_label.setVisible(bool(value))
         for page in self.pages.values():
             page.option_changed(name)
+        if name in COUNTED.values():
+            for page in self.pages.values():
+                page.scene.update()
 
     def current_page(self) -> GraphPage:
         return list(self.pages.values())[self.tabs.currentIndex()]
@@ -533,6 +582,7 @@ class MainWindow(QMainWindow):
             data["Castle_Tower"] = data.pop("Agahnims_Tower")
         self.seed_hash = data.pop("seed_hash", None)
         self.collected = set(data.pop("collected", None) or [])
+        self._forget_game()
         self._adopt_seed = False
         # A spoiler lists lobbies apart from the dungeons: file each under the dungeon that owns it
         for lobby, door in (data.pop("lobbies", None) or {}).items():
@@ -696,6 +746,8 @@ class MainWindow(QMainWindow):
                 return False
             if answer == NEW_MAP:
                 self._clear_map()
+            else:
+                self._forget_game()  # the map is kept, for another game
         self.seed_hash = seed_hash
         self.map_changed()
         return True
@@ -731,6 +783,16 @@ class MainWindow(QMainWindow):
         self.collected = set()
         for page in self.pages.values():
             page.init_page()
+        self._forget_game()
+
+    def _forget_game(self) -> None:
+        """The map on screen is another one now, or another game's. What was read from the game before, and what
+        was asked of it, is not for this one. A tracker file does not say what is held."""
+        self.cheat_wanted = False
+        if self._held is not None:
+            self._held = None
+            for page in self.pages.values():
+                page.set_items(None, {})
 
     def checks_read(self, memory: Mapping[str, bytes]) -> None:
         """The game's tables of what has been collected and the items held, as the auto-tracker just read them."""
@@ -739,6 +801,8 @@ class MainWindow(QMainWindow):
             return int.from_bytes(memory[table][room * 2 : room * 2 + 2], "little")
 
         collected = {name for name, check in checks.items() if any(word(table, room) & mask for table, room, mask in check["flags"])}
+        # A pot emptied or an enemy's drop taken is collected like any check
+        collected |= {drop.name for drops in DROPS.values() for drop in drops if word(drop.kind, drop.room) & drop.mask}
         if collected != self.collected:
             # This also puts back any check clicked on the map that the game does not agree with
             self._set_collected(collected)
@@ -746,6 +810,16 @@ class MainWindow(QMainWindow):
         if held != self._held:
             # This also puts back anything clicked in the items panel that the game does not agree with
             self.set_held(*held)
+
+    def drops_left(self, tile: rooms.Tile) -> list[Drop]:
+        """The pots, and the enemies, of a supertile still to be had, of the kinds the toolbar says this seed makes
+        checks of.
+
+        Which ones a seed made checks of is not read from the game: that would say where they are. So this is
+        right for a seed where every dungeon pot is a check, or every enemy.
+        """
+        counted = {kind for kind, option in COUNTED.items() if self.settings[option]}
+        return [drop for drop in DROPS.get(tile, ()) if drop.kind in counted and drop.name not in self.collected]
 
     def set_collected(self, check: str, collected: bool) -> None:
         """A check was clicked on the map to collect it, or right clicked to take that back."""

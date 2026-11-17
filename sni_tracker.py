@@ -139,7 +139,9 @@ class TrackerUI(Protocol):
 
     device: str | None
     connected: bool  # reading from a device through SNI
-    seed_map_wanted: bool  # the window asks for seed_map_read; the tracker sets it back
+
+    @property
+    def seed_map_wanted(self) -> bool: ...  # the window has a use for seed_map_read
 
     @property
     def pages(self) -> Mapping[str, TrackerPage]: ...  # by dungeon name
@@ -150,11 +152,12 @@ class TrackerUI(Protocol):
 
     def race_rom_warning(self) -> None: ...
 
-    def seed_seen(self, seed_hash: str) -> bool: ...  # False to stop tracking
+    # Told the game's seed at each reading, before anything read from that game: False to stop tracking
+    def seed_seen(self, seed_hash: str) -> bool: ...
 
     def checks_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in check_addresses
 
-    def seed_map_read(self, memory: Mapping[str, bytes]) -> None: ...  # by name in seed_map.READS and next_reads
+    def seed_map_read(self, seed: seed_map.SeedMap) -> None: ...
 
     def highlight_dungeon(self, name: str | None) -> None: ...
 
@@ -188,6 +191,7 @@ class Game:
 
     stay: Stay
     seed_hash: str | None = None  # None until the game is first read
+    seed: seed_map.SeedMap | None = None  # the seed's own map, read from the ROM the first time the window asks
     # These outlast leaving a dungeon
     was_transitioning: bool = False
     was_falling: bool = False
@@ -298,31 +302,41 @@ async def _sni_session(
                     game = Game(Stay(resumed=True))
                     stay = game.stay
                 game.seed_hash = data["seed_hash"]
+            # The rest of what this reading needs is read before the window is told any of it. The user can open
+            # another map while a read is waited for: seed_seen settles which map this game's readings go on, and
+            # nothing is waited for between it and the last of them
+            race = data["race"] == "01" and not forced_autotrack
+            checks = None
+            # Nothing more is read of a race seed
+            if not race:
+                if readings_to_check_read == 0:
+                    readings_to_check_read = READINGS_PER_CHECK_READ
+                    reply = await mem_stub.MultiRead(sni_pb2.MultiReadMemoryRequest(uri=dev_uri, requests=list(check_request.values())))
+                    checks = {name: bytes(response.data) for name, response in zip(check_request, reply.responses)}
+                readings_to_check_read -= 1
+                if ui.seed_map_wanted and game.seed is None:
+                    memory, reads = {}, seed_map.READS
+                    while reads:
+                        # Where some of it is kept is itself read from the ROM
+                        memory |= await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, reads)
+                        reads = seed_map.next_reads(memory)
+                    game.seed = seed_map.decode(memory)
+
             # Before the race check, so a race seed gets its own map even though it is not tracked
             if not ui.seed_seen(data["seed_hash"]):
                 ui.set_title("Janker Door Tracker -Auto-tracking stopped: disconnected to leave the map as it is")
                 break
 
-            if data["race"] == "01" and not forced_autotrack:
+            if race:
                 ui.race_rom_warning()
                 ui.set_title("Janker Door Tracker -Auto-tracking Disabled")
                 break
 
-            if readings_to_check_read == 0:
-                readings_to_check_read = READINGS_PER_CHECK_READ
-                reply = await mem_stub.MultiRead(sni_pb2.MultiReadMemoryRequest(uri=dev_uri, requests=list(check_request.values())))
-                ui.checks_read({name: bytes(response.data) for name, response in zip(check_request, reply.responses)})
-            readings_to_check_read -= 1
-
-            if ui.seed_map_wanted:
-                # Still wanted if the read fails, so it is read again once the connection is back
-                memory, reads = {}, seed_map.READS
-                while reads:
-                    # Where some of it is kept is itself read from the ROM
-                    memory |= await read_rom(mem_stub, dev_uri, dev_addrspace, mem_mapping, reads)
-                    reads = seed_map.next_reads(memory)
-                ui.seed_map_wanted = False
-                ui.seed_map_read(memory)
+            if checks is not None:
+                ui.checks_read(checks)
+            # If the checks just read are what made it wanted, it is not read from the ROM until the next reading
+            if ui.seed_map_wanted and game.seed is not None:
+                ui.seed_map_read(game.seed)
 
             # if args.darkpos:
             #     is_dark = False

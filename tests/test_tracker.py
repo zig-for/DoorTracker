@@ -8,7 +8,8 @@ import grpc
 import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
-from gui.Doors.logic import ITEMS_AT
+from gui.Doors.checks import DROPS
+from gui.Doors.logic import BITS, COMPASSES, ITEMS_AT, MAPS
 from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
 from support import VANILLA, a_rom, rom_reads
 
@@ -64,12 +65,13 @@ class PlaybackOver(grpc.aio.AioRpcError):
         pass
 
 
-def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None):
+def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None, during_check_read=None):
     """Feed the readings to the real loop. Returns the map's state as it was before each labelled reading, and at the end.
 
     collected: (table, room, mask) flags the game has set, for the tracker's reads of what has been collected.
     equipment: {address in save data: byte} for the items held.
     rom: what the ROM holds of the seed's map, as support.a_rom gives it.
+    during_check_read: called while the tracker waits for its read of what has been collected.
     """
     model = window.pages[TAB].model
     seen = {}
@@ -105,6 +107,8 @@ def play(window, app, monkeypatch, steps, collected=(), equipment=None, rom=None
 
         async def MultiRead(self, request):
             if request.requests[0].requestAddress == sni_tracker.check_addresses["room"][0]:
+                if during_check_read is not None:
+                    during_check_read()
                 return Reply(responses=[Reply(data=bytes(tables[name])) for name in sni_tracker.check_addresses])
             if rom is not None:
                 for name, (address, size) in rom_reads(rom).items():
@@ -193,9 +197,12 @@ def test_checks_the_game_has_flagged_are_collected(window, app, monkeypatch):
         "Eastern Palace - Dark Eyegore Key Drop": ("enemy", 0x99, 0x8000 >> 3),
         # or, as a fallback, by the room's "key taken" bit
         "Hyrule Castle - Key Rat Key Drop": ("room", 0x21, 0x400),
+        # A pot emptied and an enemy's drop taken are collected too, under the names the randomizer gives them
+        "Eastern Dark Pots Pot #6": ("pot", 0xBA, 0x8000 >> 5),
+        "Eastern Darkness Enemy #3": ("enemy", 0x99, 0x8000 >> 2),
     }
-    # Flags that belong to no check, and a chest's neighbour bit, mark nothing
-    noise = [("room", 0xA8, 0x8000), ("pot", 0xBA, 0x8000 >> 5), ("enemy", 0x99, 0x8000 >> 2)]
+    # A chest's neighbour bit belongs to no check, and marks nothing
+    noise = [("room", 0xA8, 0x8000)]
 
     play(window, app, monkeypatch, [("one", in_game), ("two", in_game)], collected=list(flagged.values()) + noise)
     assert window.collected == set(flagged)
@@ -252,6 +259,27 @@ def test_loading_another_seed_mid_dungeon_adds_nothing_from_the_old_game(window,
     assert (seen["end"]["links"], seen["end"]["entrances"]) == ([], [])
 
 
+def test_a_map_opened_while_the_tracker_waits_for_a_read_gets_nothing_from_that_reading(window, app, monkeypatch):
+    # The user opens another seed's map during the first reading, then says to leave it as it is
+    monkeypatch.setattr(window, "_ask", lambda *args: DoorsTracker.DISCONNECT)
+    tile, door = door_facing("No")
+    in_game = reading(tile, door["x"], door["y"])
+    emptied = DROPS[(12, 8)][0]
+
+    play(
+        window,
+        app,
+        monkeypatch,
+        [("one", in_game), ("two", in_game)],
+        collected=[(emptied.kind, emptied.room, emptied.mask)],
+        equipment={0x34B: 1},
+        during_check_read=lambda: window.load_data({"seed_hash": "eeeeeeeeee"}),
+    )
+    assert window.seed_hash == "eeeeeeeeee"
+    model = window.pages[TAB].model
+    assert tile not in model.tiles and model.player is None and window.collected == set() and model.items is None
+
+
 def supertile_with_doors_facing(*facings):
     """(supertile, door table entry by facing) of a lit Palace of Darkness supertile with a door facing each way."""
     for tile, entries in sorted(door_coordinates.items()):
@@ -292,10 +320,97 @@ def test_the_cheat_reads_the_seeds_map_out_of_the_rom(window, app, monkeypatch):
     tile, door = door_facing("No")
     here = (tile, door["x"], door["y"])
     # As the menu leaves it once the tracker is connected
-    window.seed_map_wanted = True
+    window.cheat_wanted = True
     play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], rom=a_rom(VANILLA, default_one_way_connections))
 
-    assert not window.seed_map_wanted
+    assert not window.seed_map_wanted and not window.cheat_wanted
+    assert window.pages["Eastern_Palace"].model.bosses == {(8, 12): "Armos Knights"}
     # The ROM has the doors as in the original game: a tab the player has not been in has its dungeon's rooms
     assert set(window.pages["Eastern_Palace"].model.tiles) == {tile for tile, record in SUPERTILES.items() if record.dungeon == "Eastern_Palace"}
     assert ("Eastern Cannonball S", "Eastern Lobby Bridge N") in [(link.door, link.linked_door) for link in window.pages["Eastern_Palace"].model.door_links]
+
+
+def test_a_race_seed_gets_its_own_map_and_nothing_more_is_read_of_it(window, app, monkeypatch):
+    def read():
+        raise AssertionError("read past the first reading")
+
+    async def read_rom(*args):
+        read()
+
+    monkeypatch.setattr(window, "race_rom_warning", lambda: None)
+    monkeypatch.setattr(sni_tracker, "read_rom", read_rom)
+    window.cheat_wanted = True  # asked for before the race seed was loaded
+    tile, door = door_facing("No")
+    race = {**reading(tile, door["x"], door["y"]), "race": "01"}
+
+    play(window, app, monkeypatch, [("one", race), ("two", race)], during_check_read=read)
+    assert window.seed_hash == race["seed_hash"]
+    assert tile not in window.pages[TAB].model.tiles
+
+
+def test_a_rooms_pots_are_counted_down_as_they_are_emptied(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    here = (tile, door["x"], door["y"])
+    room = (12, 8)
+    pots = [drop for drop in DROPS[room] if drop.kind == "pot"]
+    window.set_option("pottery", True)
+    assert window.drops_left(room) == pots
+    play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], collected=[("pot", pots[0].room, pots[0].mask)])
+    # The room's enemies are not counted: that takes the other box
+    assert window.drops_left(room) == pots[1:]
+    # A pot emptied is collected like any check, so it is kept with the map and gone with it
+    assert pots[0].name in window.tracker_data()["collected"]
+    window._clear_map()
+    assert window.drops_left(room) == pots
+
+
+def test_a_compass_alone_puts_the_seeds_boss_in_a_boss_room_already_on_the_map(window, app, monkeypatch):
+    window.set_option("compass_reveals", True)
+    tile, door = door_facing("No")
+    here = (tile, door["x"], door["y"])
+    eastern = window.pages["Eastern_Palace"].model
+    boss_room = (8, 12)
+    eastern.add_tile(boss_room, has_been_lit=True)
+    eastern.set_boss(boss_room, "Mothula")  # the player's guess, and wrong
+    mapped = set(eastern.tiles)
+    compasses_at, compass = BITS[COMPASSES["Eastern_Palace"]]
+    given, give = [], window.seed_map_read
+    monkeypatch.setattr(window, "seed_map_read", lambda seed: given.append(seed) or give(seed))
+    # Long enough for what is held to be read three times
+    steps = [(f"reading {k}", reading(*here)) for k in range(25)]
+    play(window, app, monkeypatch, steps, equipment={compasses_at: compass}, rom=a_rom(VANILLA, default_one_way_connections))
+
+    assert eastern.bosses == {boss_room: "Armos Knights"}
+    # The rooms are as the player mapped them: that takes the map
+    assert set(eastern.tiles) == mapped and not eastern.revealed
+    # The seed's map was handed over once: the room has had its boss
+    assert len(given) == 1 and not window.seed_map_wanted
+    # A boss room that comes onto the map later has not: here one of Ganon's Tower's, as a seed can join them
+    eastern.add_tile((12, 1), has_been_lit=True)
+    assert window.seed_map_wanted
+    # Not with the box unticked
+    window.set_option("compass_reveals", False)
+    assert not window.seed_map_wanted
+
+
+def test_a_dungeons_map_reveals_its_rooms_and_its_compass_its_boss(window, app, monkeypatch):
+    def rooms_of(dungeon):
+        return {tile for tile, record in SUPERTILES.items() if record.dungeon == dungeon}
+
+    window.set_option("map_reveals", True)
+    window.set_option("compass_reveals", True)
+    tile, door = door_facing("No")
+    here = (tile, door["x"], door["y"])
+    # The player holds Eastern Palace's map and compass, and Desert Palace's map alone
+    (maps_at, eastern_map), (also_maps_at, desert_map) = BITS[MAPS["Eastern_Palace"]], BITS[MAPS["Desert_Palace"]]
+    compasses_at, eastern_compass = BITS[COMPASSES["Eastern_Palace"]]
+    assert maps_at == also_maps_at
+    held = {maps_at: eastern_map | desert_map, compasses_at: eastern_compass}
+    play(window, app, monkeypatch, [("in a room", reading(*here)), ("still there", reading(*here))], equipment=held, rom=a_rom(VANILLA, default_one_way_connections))
+
+    eastern, desert, hera = (window.pages[name].model for name in ("Eastern_Palace", "Desert_Palace", "Tower_of_Hera"))
+    assert set(eastern.tiles) == rooms_of("Eastern_Palace") and eastern.bosses == {(8, 12): "Armos Knights"}
+    # A map alone does not say which boss is where
+    assert set(desert.tiles) == rooms_of("Desert_Palace") and desert.bosses == {}
+    # And a dungeon with neither is as the player has mapped it
+    assert set(hera.tiles) < rooms_of("Tower_of_Hera") and not hera.revealed
