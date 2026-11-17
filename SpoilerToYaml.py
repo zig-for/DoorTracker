@@ -29,6 +29,8 @@ vanilla_connections_rev = {v: k for k, v in vanilla_connections.items()}
 def parse_doors(door_data):
     mode = "doors"
     doors = defaultdict(lambda: dict([("door_links", []), ("lobby_doors", []), ("special_doors", {}), ("tiles", {})]))
+    regions_seen = defaultdict(list)  # dungeon -> the regions of the doors the spoiler links there
+    lone_big_key_doors = []  # (dungeon, door) for each big key door the spoiler names one side of
 
     for line in door_data:
         if line.strip() == "":
@@ -58,24 +60,8 @@ def parse_doors(door_data):
             linked_door_tile = f"{int(doors_data[linked_door][0]) % 16}__{int(doors_data[linked_door][0]) // 16}"
             doors[dungeon_name]["tiles"][door_tile] = True
             doors[dungeon_name]["tiles"][linked_door_tile] = True
-            cur_links = {x["door"]: x["linked_door"] for x in doors[dungeon_name]["door_links"]}
-            door_region = doors_to_regions[door]
-            linked_door_region = doors_to_regions[linked_door]
-            final_regions = []
-            for i in [door_region, linked_door_region]:
-                if type(i) == list:
-                    final_regions += i
-                else:
-                    final_regions.append(i)
-            r_doors = [regions_to_doors[x] for x in final_regions]
-            r_doors = [item for sublist in r_doors for item in sublist]
-
-            for r_door in r_doors:
-                if r_door not in cur_links.keys() and r_door not in cur_links.values():
-                    if r_door in vanilla_connections:
-                        doors[dungeon_name]["door_links"].append({"door": r_door, "linked_door": vanilla_connections[r_door]})
-                    elif r_door in vanilla_connections_rev:
-                        doors[dungeon_name]["door_links"].append({"door": r_door, "linked_door": vanilla_connections_rev[r_door]})
+            for i in [doors_to_regions[door], doors_to_regions[linked_door]]:
+                regions_seen[dungeon_name] += i if type(i) == list else [i]
         if mode == "lobbies":
             lobby, door = line.split(": ")
             doors["lobbies"][lobby.strip()] = door.strip()
@@ -93,12 +79,24 @@ def parse_doors(door_data):
                 door = door.strip()
                 doors[dungeon]["special_doors"][door] = door_type
                 if door_type == "Big Key Door":
-                    # The randomizer mostly locks the door this one leads to as well, and the spoiler does not say
-                    # when it has not: it is taken as locked, unless the spoiler gives it a type of its own
-                    links = [(link["door"], link["linked_door"]) for found in doors.values() for link in found["door_links"]]
-                    far_side = next((b if a == door else a for a, b in links if door in (a, b)), None)
-                    if far_side is not None:
-                        doors[dungeon]["special_doors"].setdefault(far_side, door_type)
+                    lone_big_key_doors.append((dungeon, door))
+
+    # The other doors of the rooms the spoiler names are linked as in the original game. This waits until every
+    # line is read: a door can be listed after another of its room
+    linked = {name for found in doors.values() for link in found["door_links"] for name in (link["door"], link["linked_door"])}
+    for dungeon, regions in regions_seen.items():
+        for door in (door for region in regions for door in regions_to_doors[region]):
+            leads_to = vanilla_connections.get(door) or vanilla_connections_rev.get(door)
+            if door not in linked and leads_to:
+                doors[dungeon]["door_links"].append({"door": door, "linked_door": leads_to})
+                linked |= {door, leads_to}
+    # The randomizer mostly locks the door a big key door leads to as well, and the spoiler does not say when it has
+    # not: it is taken as locked, unless the spoiler gives it a type of its own
+    links = [(link["door"], link["linked_door"]) for found in doors.values() for link in found["door_links"]]
+    for dungeon, door in lone_big_key_doors:
+        far_side = next((b if a == door else a for a, b in links if door in (a, b)), None)
+        if far_side is not None:
+            doors[dungeon]["special_doors"].setdefault(far_side, "Big Key Door")
     return doors
 
 

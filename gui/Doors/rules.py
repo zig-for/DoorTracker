@@ -192,7 +192,7 @@ def read() -> tuple[dict[str, Rule], dict[str, Rule], dict[str, str], dict[str, 
     reader = Reader({*done_at, ZELDA_DELIVERED})
     found = read_rules(reader, FUNCTIONS)
     # A standard seed's rules hold until Zelda is delivered, and a seed that is not standard starts with her
-    # delivered. The one that matters here: the way behind the throne room's tapestry takes having her along
+    # delivered. Among them: the way behind the throne room's tapestry takes having her along
     for key, rule in read_rules(reader, (Rules.standard_rules,)).items():
         found[key] = combine("all", [found.get(key, True), combine("any", [ZELDA_DELIVERED, rule])])
     walked = {name for names in regions_to_doors.values() for name in names}

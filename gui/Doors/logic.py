@@ -92,7 +92,7 @@ def with_hearts(items: frozenset[str], count: int) -> frozenset[str]:
     return (items - frozenset(HEARTS)) | frozenset(HEARTS[:count])
 
 
-# What is held until a game is read or the items panel clicked. With no game to say, the seed is not taken as standard
+# What is held on a new map. With no game to say, the seed is not taken as standard
 STARTING_ITEMS = with_hearts(frozenset({ZELDA_DELIVERED}), FIRST_HEARTS)
 
 

@@ -121,7 +121,7 @@ def read_autosave(file: Path) -> dict[str, Any]:
 
 # What a room counts down, by the save data's table of them -> the toolbar box that says to
 COUNTED = {"pot": "pottery", "enemy": "enemy_drops"}
-# The items and small keys held until a game is read or the items panel clicked
+# The items and small keys held on a new map
 NOTHING_HELD: tuple[frozenset[str], dict[str, int]] = (STARTING_ITEMS, {})
 TAB_ARROW = QSize(8, 10)  # the arrow on the tab of the dungeon the player is in
 
@@ -312,7 +312,7 @@ class MainWindow(QMainWindow):
         # Checks collected, with pots emptied and enemy drops taken, by name in gui/Doors/checks.py; kept in the
         # tracker file
         self.collected: set[str] = set()
-        self._held: tuple[frozenset[str], dict[str, int]] = NOTHING_HELD  # the items and small keys last read or clicked
+        self._held: tuple[frozenset[str], dict[str, int]] = NOTHING_HELD  # the items and small keys: read, clicked, or loaded with the map
         self._player_heads: list[QPixmap] = []  # see player_sprite_read
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -326,7 +326,8 @@ class MainWindow(QMainWindow):
         if not (geometry and self.restoreGeometry(QByteArray.fromHex(geometry.encode()))):
             self.resize(*WINDOW_SIZES[args.size or "medium"])
         self.device: str | None = None
-        self.connected = False  # the auto-tracker is reading from a device
+        self._connected = False
+        self._game_seed: str | None = None  # the seed of the game being read, once the auto-tracker has said
         self.cheat_wanted = False  # the cheat was asked for, and has not been done yet
         self._adopt_seed = False  # see new_map
         self.sni_task: asyncio.Task | None = None
@@ -408,6 +409,17 @@ class MainWindow(QMainWindow):
 
     def _tab_changed(self) -> None:
         self.set_setting("tab", self.current_dungeon())
+
+    @property
+    def connected(self) -> bool:
+        """The auto-tracker is reading from a device."""
+        return self._connected
+
+    @connected.setter
+    def connected(self, connected: bool) -> None:
+        self._connected = connected
+        if not connected:
+            self._game_seed = None  # the next game read need not be the same one
 
     def _open(self) -> None:
         self.load_file()
@@ -596,6 +608,20 @@ class MainWindow(QMainWindow):
                 from SpoilerToYaml import parse_dr_spoiler
 
                 data = parse_dr_spoiler(fh)
+        seed = data.get("seed_hash")
+        if seed is not None and self._game_seed is not None and seed != self._game_seed:
+            # Left to the tracker, the map would be put away again at the next reading, for the game's own
+            answer = self._ask(
+                "Different seed",
+                "This map is for a different seed from the game being tracked.\n\n"
+                "Disconnecting opens it and stops auto-tracking. File -> Reconnect to SNI starts tracking again, "
+                "and brings back the game's own map.",
+                DISCONNECT,
+                CANCEL,
+            )
+            if answer != DISCONNECT:
+                return
+            self.stop_tracking()
         if self._save_timer.isActive():
             # The map on screen is about to be replaced: its last changes go to its autosave first
             self._write_autosave()
@@ -605,11 +631,14 @@ class MainWindow(QMainWindow):
         """Show the map a tracker file holds."""
         if "Agahnims_Tower" in data:
             data["Castle_Tower"] = data.pop("Agahnims_Tower")
-        self.seed_hash = data.pop("seed_hash", None)
-        self.collected = set(data.pop("collected", None) or [])
+        # All of these are read before any is kept: one that cannot be leaves the window as it was
+        seed_hash = data.pop("seed_hash", None)
+        collected = set(data.pop("collected", None) or [])
         # A file from before these were saved has neither
         items, keys = data.pop("items", None), data.pop("small_keys", None)
-        self._forget_game(NOTHING_HELD if items is None else (frozenset(items), dict(keys or {})))
+        held = NOTHING_HELD if items is None else (frozenset(items), dict(keys or {}))
+        self.seed_hash, self.collected = seed_hash, collected
+        self._forget_game(held)
         self._adopt_seed = False
         # A spoiler lists lobbies apart from the dungeons: file each under the dungeon that owns it
         for lobby, door in (data.pop("lobbies", None) or {}).items():
@@ -743,6 +772,7 @@ class MainWindow(QMainWindow):
         The map on screen is only given another seed's hash once it has been swapped for that seed's map, or
         the user has said what to do with it. Otherwise one seed's map could be saved over another's.
         """
+        self._game_seed = seed_hash
         if seed_hash == self.seed_hash:
             return True
         saved = self.autosave / autosave_name(seed_hash) if self.autosave is not None and self.autosave_on else None

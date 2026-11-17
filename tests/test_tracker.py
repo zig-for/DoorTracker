@@ -4,12 +4,14 @@ import argparse
 import asyncio
 
 import grpc
+from PySide6.QtCore import QPointF
 
 import DoorsTracker
 import sni_tracker
 from data.doors_data import dark_tiles, default_one_way_connections, door_coordinates, doors_data
 from gui.Doors import link_sprite
 from gui.Doors.checks import DROPS
+from gui.Doors.graph_model import THUMB
 from gui.Doors.logic import BITS, COMPASSES, ITEMS_AT, MAPS, STARTING_ITEMS
 from gui.Doors.rooms import INTERIOR_DOORS, SUPERTILES
 from support import VANILLA, a_rom, rom_reads
@@ -267,6 +269,14 @@ def test_the_player_is_drawn_with_the_head_of_the_games_own_sprite(window, app, 
         return window.player_head().toImage().pixelColor(x, y).getRgb()
 
     assert (pixel(0, 0), pixel(15, 15), pixel(1, 0)) == ((248, 0, 0, 255), (248, 248, 248, 255), (0, 0, 0, 0))
+    # On the map it is around where the player is, a map unit to each of its pixels: this is its top left one
+    page = window.pages[TAB]
+    page.fit_view()
+    app.processEvents()
+    player = page.model.player
+    x, y = page.model.pos[player.node]
+    top_left = QPointF(x + (player.x / 512 - 0.5) * THUMB - 7.5, y + (player.y / 512 - 0.5) * THUMB - 7.5)
+    assert page.view.grab().toImage().pixelColor(page.view.mapFromScene(top_left)).getRgb() == (248, 0, 0, 255)
     window.set_held(frozenset({"Blue Mail"}), {})
     assert pixel(0, 0) == (0, 248, 0, 255)
     window.set_held(frozenset({"Blue Mail", "Red Mail"}), {})

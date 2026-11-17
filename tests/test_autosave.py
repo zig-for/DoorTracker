@@ -78,6 +78,13 @@ def test_what_is_held_is_saved_with_the_map(open_window, tmp_path, monkeypatch):
     assert page.items_panel.counts["Turtle_Rock"].text() == "0"
 
 
+def test_a_file_whose_items_cannot_be_read_leaves_the_map_its_seed(window):
+    window.seed_seen("aaaaaaaaaa")
+    with pytest.raises(TypeError):
+        window.load_data({"seed_hash": "bbbbbbbbbb", "collected": ["Eastern Palace - Compass Chest"], "items": 5})
+    assert (window.seed_hash, window.collected) == ("aaaaaaaaaa", set())
+
+
 def test_each_seed_keeps_its_own_map(window, tmp_path):
     window.start_autosave(tmp_path, restore=True)
     window.seed_seen("aaaaaaaaaa")
@@ -231,6 +238,27 @@ def test_new_while_connected_warns_first(window, tmp_path, monkeypatch, go_ahead
     assert asked == ["Connected to a game"]
     assert window.seed_hash == "aaaaaaaaaa"
     assert links(window) == ([] if go_ahead else old_map)
+
+
+@pytest.mark.parametrize("go_ahead", [True, False])
+def test_opening_a_map_for_another_seed_than_the_games_asks_first(window, tmp_path, monkeypatch, go_ahead):
+    window.connected = True
+    window.seed_seen("aaaaaaaaaa")
+    files = {seed: tmp_path / f"{seed}.yaml" for seed in ("aaaaaaaaaa", "bbbbbbbbbb")}
+    for seed, file in files.items():
+        file.write_text(yaml.dump({**window.tracker_data(), "seed_hash": seed}))
+    grow(window.pages[TAB].model, 2)
+    old_map = links(window)
+    asked = []
+    answer = DoorsTracker.DISCONNECT if go_ahead else DoorsTracker.CANCEL
+    monkeypatch.setattr(window, "_ask", lambda title, *rest: asked.append(title) or answer)
+
+    window.load_file(str(files["bbbbbbbbbb"]))
+    assert asked == ["Different seed"]
+    assert (window.seed_hash, links(window)) == (("bbbbbbbbbb", []) if go_ahead else ("aaaaaaaaaa", old_map))
+    # A map for the game's own seed is opened with no question
+    window.load_file(str(files["aaaaaaaaaa"]))
+    assert (window.seed_hash, links(window), len(asked)) == ("aaaaaaaaaa", [], 1)
 
 
 @pytest.mark.parametrize("new_map", [True, False])
