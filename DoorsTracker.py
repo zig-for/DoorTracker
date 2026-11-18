@@ -1099,6 +1099,7 @@ def main():
     app = QApplication([sys.argv[0]] + qt_args)
     # Names the per-user folder
     app.setApplicationName("JankerDoorTracker")
+    app.setWindowIcon(QIcon(str(Path(__file__).parent / "data" / "JankerTracker.ico")))
     folder = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation))
     folder.mkdir(parents=True, exist_ok=True)
     window = MainWindow(args, settings_file=folder / "settings.yaml")

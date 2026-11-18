@@ -34,7 +34,7 @@ You can also save the current state of the tracker with File -> Save Tracker Dat
 
 ### Windows users
 
-Download the latest release from the releases page. Run the `DoorsTracker_vx.x.x.exe` file.
+Download the latest release from the releases page. Run `JankerTracker.exe`.
 
 ### Other users
 

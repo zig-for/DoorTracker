@@ -10,7 +10,7 @@ a = Analysis(
     binaries=[],
     # The door randomizer's files whose source the tracker reads when it starts, for how some of their functions
     # are written. The modules it imports from the randomizer are found from the imports
-    datas=[(f'ALttPDoorRandomizer/{name}', 'ALttPDoorRandomizer') for name in ('Rules.py', 'BaseClasses.py', 'InitialSram.py')]
+    datas=[(f'ALttPDoorRandomizer/{name}', 'ALttPDoorRandomizer') for name in ('Rules.py', 'BaseClasses.py', 'InitialSram.py', 'Doors.py', 'Bosses.py')]
     # and its item pictures, for the items panel
     + [('ALttPDoorRandomizer/data/itemgfx', 'ALttPDoorRandomizer/data/itemgfx')],
     hiddenimports=[],
@@ -32,7 +32,8 @@ exe = EXE(
     a.zipfiles,
     a.datas + Tree('./data', prefix='data', excludes=['tmp','*.pyc']),
     [],
-    name='DoorsTracker',
+    name='JankerTracker',
+    icon='data/JankerTracker.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
