@@ -24,6 +24,15 @@ def test_a_settings_file_that_cannot_be_used_is_reported_and_the_defaults_used(o
     assert window.height() == DoorsTracker.WINDOW_SIZES["medium"][1]
 
 
+def test_the_help_menu_shows_the_ai_disclosure_and_the_credits(window, monkeypatch):
+    shown = []
+    monkeypatch.setattr(QMessageBox, "about", lambda parent, title, text: shown.append((title, text)))
+    (help_menu,) = [action.menu() for action in window.menuBar().actions() if action.text() == "Help"]
+    for action in help_menu.actions():
+        action.trigger()
+    assert shown == [("AI Disclosure", DoorsTracker.AI_DISCLOSURE), ("Credits", DoorsTracker.CREDITS)]
+
+
 def test_a_slider_value_outside_its_range_is_brought_into_it(open_window, tmp_path):
     file = tmp_path / "settings.yaml"
     file.write_text("spacing: 1.0e+300\ndead_end_pull: -7\n")

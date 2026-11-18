@@ -124,6 +124,15 @@ COUNTED = {"pot": "pottery", "enemy": "enemy_drops"}
 # The items and small keys held on a new map
 NOTHING_HELD: tuple[frozenset[str], dict[str, int]] = (STARTING_ITEMS, {})
 TAB_ARROW = QSize(8, 10)  # the arrow on the tab of the dungeon the player is in
+# What the Help menu shows
+AI_DISCLOSURE = "<p>This tracker was written with Claude. Sorry about that.</p>"
+CREDITS = (
+    "<p>Based on Muffins' Jank (Auto)Door Tracker.</p>"
+    "<p>Logic from aerinon's <a href='https://github.com/aerinon/ALttPDoorRandomizer'>ALttP Door Randomizer</a> "
+    "(<a href='https://github.com/aurabot24/ALttPDoorRandomizer'>aurabot24's fork</a>).</p>"
+    "<p>Auto-tracking is through <a href='https://github.com/alttpo/sni'>SNI</a>.</p>"
+    "<p>The pictures from The Legend of Zelda: A Link to the Past are copyright Nintendo.</p>"
+)
 
 
 def tab_arrows(colour: QColor) -> tuple[QIcon, QIcon]:
@@ -403,6 +412,9 @@ class MainWindow(QMainWindow):
             menu.addAction(action)
         experimental.addSeparator()
         experimental.addAction("Cheat: Reveal All Tiles", self._reveal_all)
+        help_menu = bar.addMenu("Help")
+        help_menu.addAction("AI Disclosure", self._ai_disclosure)
+        help_menu.addAction("Credits", self._credits)
 
     # What the menus and the toolbar call. Signals go to methods, never lambdas: Qt keeps a lambda that holds the
     # window alive, and the window with it after it has closed
@@ -423,6 +435,12 @@ class MainWindow(QMainWindow):
 
     def _open(self) -> None:
         self.load_file()
+
+    def _ai_disclosure(self) -> None:
+        QMessageBox.about(self, "AI Disclosure", AI_DISCLOSURE)
+
+    def _credits(self) -> None:
+        QMessageBox.about(self, "Credits", CREDITS)
 
     def _reconnect(self) -> None:
         self.start_tracking()
