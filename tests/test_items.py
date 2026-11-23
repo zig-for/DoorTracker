@@ -4,8 +4,23 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
 from DoorsTracker import IconPicker
-from gui.Doors.logic import BIG_KEYS, COMPASSES, ITEMS_AT, ITEMS_LENGTH, MAPS, READABLE, STARTING_ITEMS, hearts_held, small_keys
-from gui.qt.items_panel import BIG_KEY_PICTURE, ITEMS, PICTURE_NAMES, PICTURES, SHORT_NAMES, SLOTS, clicked, picture
+from gui.Doors.logic import (
+    BIG_KEYS,
+    BOTTLES,
+    COMPASSES,
+    ITEMS_AT,
+    ITEMS_LENGTH,
+    MAGIC_BARS,
+    MAPS,
+    READABLE,
+    STARTING_ITEMS,
+    enough_magic,
+    hearts_held,
+    holds,
+    items_held,
+    small_keys,
+)
+from gui.qt.items_panel import BIG_KEY_PICTURE, ITEMS, PICTURE_NAMES, PICTURES, SHORT_NAMES, SLOTS, clicked, picture, slot_picture
 
 
 def test_every_item_read_has_a_place_and_a_picture():
@@ -38,6 +53,39 @@ def test_small_keys_for_the_dungeon_the_player_is_in_are_counted_apart():
     assert small_keys(bytes(save), 0x0C)["Palace_of_Darkness"] == 4
     assert small_keys(bytes(save), 0x0C)["Desert_Palace"] == 2
     assert small_keys(bytes(save), 0x02)["Hyrule_Castle"] == 4
+
+
+def test_bottles_are_counted_and_the_magic_upgrade_read():
+    save = bytearray(ITEMS_LENGTH)
+    # Something in the first and the third bottle, and half magic
+    for address, value in {0x35C: 2, 0x35E: 3, 0x37B: 1}.items():
+        save[address - ITEMS_AT] = value
+    held = items_held(bytes(save))
+    assert held & set(BOTTLES) == {"Bottle", "2 Bottles"}
+    assert held & set(MAGIC_BARS) == {"Magic Upgrade (1/2)"}
+
+
+def test_enough_magic_is_a_bar_that_holds_it_or_bottles_to_fill_the_bar_again():
+    # Twenty is two and a half of the bar the game starts with
+    rule = enough_magic(20)
+    assert not holds(rule, frozenset({"Bottle"}))
+    assert holds(rule, frozenset({"Bottle", "2 Bottles"}))
+    assert not holds(rule, frozenset({"Magic Upgrade (1/2)"}))
+    assert holds(rule, frozenset({"Magic Upgrade (1/2)", "Bottle"}))
+    assert holds(rule, frozenset({"Magic Upgrade (1/2)", "Magic Upgrade (1/4)"}))
+    assert enough_magic(8) is True
+    # The biggest bar and four bottles hold 160
+    assert enough_magic(161) is False
+
+
+def test_the_bottles_cell_counts_them(app):
+    bottles = next(slot for slot in SLOTS if slot.counted)
+    held = clicked(bottles, clicked(bottles, frozenset(), 1), 1)
+    assert held == {"Bottle", "2 Bottles"}
+    # Each count has its own number on the bottle, from one up
+    one, two = slot_picture(bottles, frozenset({"Bottle"})).toImage(), slot_picture(bottles, held).toImage()
+    assert one != two and one != picture_in_cell("Bottle")
+    assert clicked(bottles, held, -1) == {"Bottle"}
 
 
 def test_the_panel_lights_what_is_held(window):

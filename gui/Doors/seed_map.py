@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from gui.Doors.randomizer import doors_and_portals
+from gui.Doors.rooms import tile_of
 
 # After gui.Doors.randomizer, which makes the randomizer importable
 from ALttPDoorRandomizer.BaseClasses import Direction, DoorType  # noqa: E402
@@ -155,5 +156,5 @@ def decode(memory: Mapping[str, bytes]) -> SeedMap:
     for room in BOSS_ROOM_NUMBERS:
         boss = BOSS_SPRITES.get(memory[f"sprites {room:#x}"][3])
         if boss is not None:
-            bosses[(room % 16, room // 16)] = boss
+            bosses[tile_of(room)] = boss
     return SeedMap(leads, entrances, bosses)

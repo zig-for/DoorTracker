@@ -48,9 +48,15 @@ AT_LEAST = {
     "Mirror Shield": (0x35A, 3),
     "Blue Mail": (0x35B, 1),
     "Red Mail": (0x35B, 2),
+    "Magic Upgrade (1/2)": (0x37B, 1),
+    "Magic Upgrade (1/4)": (0x37B, 2),
     # Not an item: room for bombs. It is none until the bomb bag is found, in seeds that have one
     "Bombs": (0x370, 1),
 }
+# Magic upgrade -> how much magic the bar holds with it, and how much it holds without one: as can_extend_magic
+# in BaseClasses.py has them
+MAGIC_BARS = {"Magic Upgrade (1/2)": 16, "Magic Upgrade (1/4)": 32}
+MAGIC_BAR = 8
 # item -> (address, bit). 0x38C is the randomizer's own record of the items that share a slot in the menu, where
 # the slot itself only holds the one last picked up
 BITS = {
@@ -73,8 +79,9 @@ COMPASSES = {tab: key.replace("Big Key", "Compass") for tab, key in BIG_KEYS.ite
 DUNGEON_NUMBERS = {0x00: "Hyrule_Castle"} | {compass_data[dungeon_name(tab)][4]: tab for tab in DUNGEONS}
 KEYS_HERE_AT = 0x36F  # the small keys for the dungeon the player is in; 0xFF outside
 BOTTLES_AT = range(0x35C, 0x360)  # what is in each of the four bottles; 0 for no bottle
-BOTTLE = "Bottle"
-READABLE = frozenset(AT_LEAST) | frozenset(BITS) | {BOTTLE}
+# Bottles are held as these, one for each the player has, so a rule that asks for two asks for the second
+BOTTLES = ["Bottle", "2 Bottles", "3 Bottles", "4 Bottles"]
+READABLE = frozenset(AT_LEAST) | frozenset(BITS) | frozenset(BOTTLES)
 SWORD = 0x359
 NO_SWORDS = 0xFF  # what a swordless seed puts in the sword's byte
 HEALTH_AT = 0x36C  # the most health the player can have, in eighths of a heart
@@ -105,8 +112,7 @@ def items_held(save: bytes) -> frozenset[str]:
 
     held = {item for item, (address, least) in AT_LEAST.items() if at(address) >= least}
     held |= {item for item, (address, bit) in BITS.items() if at(address) & bit}
-    if any(at(address) for address in BOTTLES_AT):
-        held.add(BOTTLE)
+    held |= set(BOTTLES[: sum(1 for address in BOTTLES_AT if at(address))])
     if at(PROGRESS_AT) >= 2:
         held.add(ZELDA_DELIVERED)
     return with_hearts(frozenset(held), at(HEALTH_AT) // 8)
@@ -149,3 +155,33 @@ def holds(rule: Rule, items: frozenset[str], reached: Mapping[str, int] | None =
     if kind == "not":
         return not holds(parts[0], items, reached)
     return (all if kind == "all" else any)(holds(part, items, reached) for part in parts)
+
+
+def combine(kind: str, parts: list[Rule]) -> Rule:
+    """("all" | "any", rules) with the constants folded away and rules of the same kind merged in."""
+    empty = kind == "all"  # an empty "all" is met, an empty "any" is not
+    kept: list[Rule] = []
+    for part in parts:
+        if part is (not empty):
+            return not empty
+        for inner in part[1:] if isinstance(part, tuple) and part[0] == kind else [part]:
+            if inner is not empty and inner not in kept:
+                kept.append(inner)
+    if not kept:
+        return empty
+    return kept[0] if len(kept) == 1 else (kind, *kept)
+
+
+def enough_magic(needed: int) -> Rule:
+    """What having this much magic takes, as can_extend_magic in BaseClasses.py has it: a bar that holds it, or
+    bottles to fill the bar again from, each good for one bar more.
+
+    The randomizer counts the bottles only where a shop that sells green or blue potion can be got to, and counts
+    each for less in a hard seed. Neither is known: the shop is taken as got to, and the seed as not hard.
+    """
+    ways = []
+    for upgrade, bar in ((None, MAGIC_BAR), *MAGIC_BARS.items()):
+        bottles = -(-needed // bar) - 1
+        if bottles <= len(BOTTLES):
+            ways.append(combine("all", [*([upgrade] if upgrade else []), *([BOTTLES[bottles - 1]] if bottles > 0 else [])]))
+    return combine("any", ways)

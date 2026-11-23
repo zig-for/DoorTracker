@@ -2,12 +2,16 @@
 
 import copy
 
-from data.doors_data import dark_tiles, default_door_connections, ladders, open_edges, spiral_staircases, straight_staircases
+from PySide6.QtCore import QPointF
+
+from data.doors_data import dark_tiles, default_door_connections, ladders, open_edges, regions_to_doors, spiral_staircases, straight_staircases
 from data.worlds_data import dungeon_worlds
 from gui.Doors import seed_map
+from gui.Doors.checks import checks
 from gui.Doors.graph_model import GraphModel
 from gui.Doors.randomizer import doors_and_portals
 from gui.Doors.rooms import DOORS, INTERIOR_DOORS, SPLIT, SUPERTILES, supertile
+from gui.Doors.rules import check_regions
 
 # After gui.Doors, which makes the randomizer importable
 from ALttPDoorRandomizer.source.enemizer import Bossmizer  # noqa: E402
@@ -85,9 +89,29 @@ def new_model(tab="Turtle_Rock", **flags):
         "vanilla_drops": True,
         "trim_rooms": True,
         "split_rooms": True,
+        "enemy_shuffle": False,
     }
     settings.update(flags)
     return GraphModel(dungeon_worlds[tab], settings)
+
+
+def model_leading_to(name, tab):
+    """A map of a check's supertile, with an entrance on a door of the region the check is in."""
+    model = new_model(tab)
+    model.add_tile(checks[name]["tile"], has_been_lit=True)
+    model.add_lobby_door(next(door for door in regions_to_doors[check_regions[name]] if door in DOORS), tab)
+    model.update()
+    return model
+
+
+class At:
+    """Stands in for a mouse event at a point of the viewport."""
+
+    def __init__(self, point):
+        self.point = point
+
+    def position(self):
+        return QPointF(self.point)
 
 
 def parts_shown(model, tile):

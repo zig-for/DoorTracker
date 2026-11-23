@@ -73,6 +73,12 @@ CHECK_STYLES = {
 }
 CHECK_COLLECTED = CheckStyle(DOOR_LINKED, OUTLINE)
 
+# What a boss, or one of a kill room's enemies, is drawn on: light, as two kinds of enemy are all but black. Red
+# while the player's items do not beat it, and grey for an enemy that need not be killed
+PLATE = "#e4e7ec"
+PLATE_BLOCKED = "#f2a3a6"
+PLATE_NA = DOOR_LINKED
+
 
 def dungeon_colour(dungeon: str | None) -> str:
     """Colour for the supertiles of a dungeon; grey when the dungeon is not known."""

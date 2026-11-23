@@ -12,7 +12,9 @@ a = Analysis(
     # are written. The modules it imports from the randomizer are found from the imports
     datas=[(f'ALttPDoorRandomizer/{name}', 'ALttPDoorRandomizer') for name in ('Rules.py', 'BaseClasses.py', 'InitialSram.py', 'Doors.py', 'Bosses.py')]
     # and its item pictures, for the items panel
-    + [('ALttPDoorRandomizer/data/itemgfx', 'ALttPDoorRandomizer/data/itemgfx')],
+    + [('ALttPDoorRandomizer/data/itemgfx', 'ALttPDoorRandomizer/data/itemgfx')]
+    # and its tables of what each weapon does to each enemy, which its kill room rule reads
+    + [(f'ALttPDoorRandomizer/source/enemizer/{name}', 'ALttPDoorRandomizer/source/enemizer') for name in ('damage_table.yaml', 'enemy_damage_table.yaml')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

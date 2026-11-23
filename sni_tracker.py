@@ -14,6 +14,7 @@ import sni.sni_pb2_grpc as sni
 from data.doors_data import dark_tiles, door_coordinates, doors_data
 from gui.Doors import link_sprite, seed_map
 from gui.Doors.logic import DUNGEON_NUMBERS, ITEMS_AT, ITEMS_LENGTH
+from gui.Doors.rooms import tile_of
 
 # After gui.Doors.logic, which makes the randomizer importable
 from ALttPDoorRandomizer.MultiClient import ITEM_SRAM_SIZE, POT_ITEMS_SRAM_START, SAVEDATA_START, SPRITE_ITEMS_SRAM_START  # noqa: E402
@@ -416,10 +417,7 @@ async def _sni_session(
 
             # TODO: Check doors to see if they're entrances and add lobbies?
 
-            eg_tile = stay.eg_tile = (
-                int(data["dungeon_room"], 16) % 16,
-                int(data["dungeon_room"], 16) // 16,
-            )
+            eg_tile = stay.eg_tile = tile_of(int(data["dungeon_room"], 16))
             current_x_supertile = int(data["link_x"][2:], 16) // 2
             current_y_supertile = int(data["link_y"][2:], 16) // 2
 

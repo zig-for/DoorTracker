@@ -26,6 +26,17 @@ Tile = tuple[int, int]  # a supertile, as (column, row) on the EG map
 Box = tuple[float, float, float, float]  # left, top, right, bottom
 
 
+def tile_of(room: int) -> Tile:
+    """The supertile of a room, by the game's number for the room."""
+    return room % 16, room // 16
+
+
+def room_of(tile: Tile) -> int:
+    """The game's number for a supertile's room."""
+    column, row = tile
+    return row * 16 + column
+
+
 class Node(NamedTuple):
     """A room card on the map: a supertile, or one part of a split one."""
 

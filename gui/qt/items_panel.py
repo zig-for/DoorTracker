@@ -9,7 +9,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import QAbstractButton, QGridLayout, QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget
 
-from gui.Doors.logic import BIG_KEYS, BOTTLE, FIRST_HEARTS, HEARTS, STARTING_ITEMS, hearts_held, with_hearts
+from gui.Doors.logic import BIG_KEYS, BOTTLES, FIRST_HEARTS, HEARTS, MAGIC_BARS, STARTING_ITEMS, hearts_held, with_hearts
 from gui.Doors.randomizer import FOLDER
 
 PICTURES = FOLDER / "data" / "itemgfx"  # the randomizer's own, 32 pixels high
@@ -28,6 +28,9 @@ PICTURE_NAMES = {
     "Cape": "Magic Cape",
     "Titans Mitts": "Titans Mitt",
     "Red Shield": "Fire Shield",
+    "Magic Upgrade (1/2)": "Half Magic",
+    "Magic Upgrade (1/4)": "Quarter Magic",
+    **dict.fromkeys(BOTTLES, "Bottle"),
 }
 BIG_KEY_PICTURE = "Big Key"
 
@@ -39,6 +42,7 @@ class Slot:
     items: tuple[str, ...]
     together: bool = False  # the items share it; otherwise each takes the place of the one before
     start: str | None = None  # picture of what the player has in it from the start
+    counted: bool = False  # each item is one more of the same thing, up to four: how many are held is put on it
 
 
 def one(item: str) -> Slot:
@@ -50,16 +54,21 @@ MENU = [
     [one("Bow"), Slot(("Blue Boomerang", "Red Boomerang"), together=True), one("Hookshot"), one("Bombs"), Slot(("Mushroom", "Magic Powder"), together=True)],
     [one("Fire Rod"), one("Ice Rod"), one("Bombos"), one("Ether"), one("Quake")],
     [one("Lamp"), one("Hammer"), Slot(("Shovel", "Ocarina"), together=True), one("Bug Catching Net"), one("Book of Mudora")],
-    [one(BOTTLE), one("Cane of Somaria"), one("Cane of Byrna"), one("Cape"), one("Magic Mirror")],
+    [Slot(tuple(BOTTLES), counted=True), one("Cane of Somaria"), one("Cane of Byrna"), one("Cape"), one("Magic Mirror")],
 ]
 ABILITIES = [one("Pegasus Boots"), Slot(("Power Glove", "Titans Mitts")), one("Flippers"), one("Moon Pearl")]
+UPGRADES = [Slot(tuple(MAGIC_BARS))]
 EQUIPMENT = [
     Slot(("Fighter Sword", "Master Sword", "Tempered Sword", "Golden Sword")),
     Slot(("Blue Shield", "Red Shield", "Mirror Shield")),
     Slot(("Blue Mail", "Red Mail"), start="Green Mail"),
 ]
-SLOTS = [slot for row in (*MENU, ABILITIES, EQUIPMENT) for slot in row]
-ITEMS = [item for slot in SLOTS for item in (*([slot.start] if slot.start else []), *slot.items)]
+SLOTS = [slot for row in (*MENU, ABILITIES, EQUIPMENT, UPGRADES) for slot in row]
+SWORDS = EQUIPMENT[0].items  # each one's picture has its level on it, 1 to 4
+NUMBER_FROM = 18  # that number is right of this and below it, in a picture 32 across
+NUMBER_EDGE = 2  # how far the edge put round it reaches: one of the picture's own pixels, which are doubled
+# A counted slot's items are one item, however many of it
+ITEMS = [item for slot in SLOTS for item in (*([slot.start] if slot.start else []), *(slot.items[:1] if slot.counted else slot.items))]
 # The tracker's name for a dungeon -> what the keys strip calls it, in the order of the tabs
 SHORT_NAMES = {
     "Hyrule_Castle": "HC",
@@ -115,8 +124,30 @@ def slot_picture(slot: Slot, held: frozenset[str]) -> QPixmap:
         item = mine[-1] if mine else slot.items[0]
         shown = picture(slot.start if slot.start and not mine else PICTURE_NAMES.get(item, item))
         painter.drawPixmap((CELL - shown.width()) // 2, 0, shown)
+        if slot.counted and mine:
+            painter.drawPixmap(0, 0, number(len(mine)))
     painter.end()
     return cell if mine or slot.start else greyed(cell)
+
+
+@cache
+def number(count: int) -> QPixmap:
+    """A number from 1 to 4, where and as the picture of the sword of that level has it: in the bottom right
+    corner, with a dark edge added all round it to read over another picture."""
+    sword = picture(SWORDS[count - 1]).toImage()
+    white, edge = QColor(248, 248, 248), QColor(40, 40, 40)
+    # The corner has nothing of the sword in it but the number
+    corner = [(x, y) for x in range(NUMBER_FROM, sword.width()) for y in range(NUMBER_FROM, sword.height())]
+    marks = [(x, y) for x, y in corner if sword.pixelColor(x, y) == white]
+    made = QImage(sword.size(), QImage.Format.Format_ARGB32)
+    made.fill(Qt.GlobalColor.transparent)
+    for x, y in marks:
+        for near_x in range(max(0, x - NUMBER_EDGE), min(made.width(), x + NUMBER_EDGE + 1)):
+            for near_y in range(max(0, y - NUMBER_EDGE), min(made.height(), y + NUMBER_EDGE + 1)):
+                made.setPixelColor(near_x, near_y, edge)
+    for x, y in marks:
+        made.setPixelColor(x, y, white)
+    return QPixmap.fromImage(made)
 
 
 def hearts_picture(count: int) -> QPixmap:
@@ -266,8 +297,8 @@ class ItemsPanel(QWidget):
         for row, slots in enumerate(MENU):
             for place, slot in enumerate(slots):
                 grid.addWidget(cell(slot), row, place)
-        # To the right of the menu's grid: a column of abilities and a column of equipment
-        for place, slots in enumerate((ABILITIES, EQUIPMENT)):
+        # To the right of the menu's grid: a column of abilities, one of equipment and one of upgrades
+        for place, slots in enumerate((ABILITIES, EQUIPMENT, UPGRADES)):
             for row, slot in enumerate(slots):
                 grid.addWidget(cell(slot), row, len(MENU[0]) + place)
         # Under the equipment: how many hearts

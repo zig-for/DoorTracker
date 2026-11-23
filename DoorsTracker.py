@@ -39,6 +39,7 @@ from gui import files
 from gui.Doors import link_sprite, rooms, seed_map
 from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import DROPS, Drop, checks
+from gui.Doors.kill_rooms import NA, PICKS
 from gui.Doors.layout import REPEL_RANGE
 from gui.Doors.logic import COMPASSES, MAPS, STARTING_ITEMS, items_held, small_keys
 from gui.qt.graph_page import Assets, GraphPage
@@ -81,6 +82,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "compass_reveals": False,
     "pottery": False,
     "enemy_drops": False,
+    "enemy_shuffle": False,
 }
 
 
@@ -131,6 +133,8 @@ CREDITS = (
     "<p>Logic from aerinon's <a href='https://github.com/aerinon/ALttPDoorRandomizer'>ALttP Door Randomizer</a> "
     "(<a href='https://github.com/aurabot24/ALttPDoorRandomizer'>aurabot24's fork</a>).</p>"
     "<p>Auto-tracking is through <a href='https://github.com/alttpo/sni'>SNI</a>.</p>"
+    "<p>Enemy pictures from <a href='https://zeldawiki.wiki'>Zelda Wiki</a>, by way of StripesOO7's "
+    "<a href='https://github.com/StripesOO7/alttp-ap-poptracker-pack'>ALttP PopTracker pack</a>.</p>"
     "<p>The pictures from The Legend of Zelda: A Link to the Past are copyright Nintendo.</p>"
 )
 
@@ -164,53 +168,31 @@ class Picker(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.choice = None
+        self.grid = QGridLayout(self)
+        self.grid.setSpacing(2)
 
     def _pick(self):
         self.choice = self.sender().objectName()
         self.accept()
 
-
-class IconPicker(Picker):
-    """The icons to put on a door: rows of marks, items and equipment, then the ways in. Those are this dungeon's
-    entrances, in the same four places for every dungeon, and a place the player can get to."""
-
-    # The marks; the items, with the two keys; the equipment. The sheet's slash mark is not here: it is the first sword
-    ROWS = (
-        ("Bomb Door", "Dash Door", "Trap Door", "Skull", "Checkmark", "Crossmark", "Peg Switch", "Blue Peg", "Orange Peg", "Drop"),
-        ("Bow", "Blue Boomerang", "Red Boomerang", "Hookshot", "Bombs", "Mushroom", "Magic Powder", "Fire Rod", "Ice Rod", "Lamp"),
-        ("Bombos", "Ether", "Quake", "Hammer", "Shovel", "Ocarina", "Bug Catching Net", "Book of Mudora", "Bottle", "Magic Mirror"),
-        ("Cane of Somaria", "Cane of Byrna", "Cape", "Pegasus Boots", "Power Glove", "Titans Mitts", "Flippers", "Moon Pearl", "Key Door", "Big Key Door"),
-        ("Fighter Sword", "Master Sword", "Tempered Sword", "Golden Sword", "Blue Shield", "Red Shield", "Mirror Shield", "Green Mail", "Blue Mail", "Red Mail"),
-    )
-    ENTRANCES = 4  # the most a dungeon has
-
-    def __init__(self, parent, assets, world, taken):
-        """taken: the entrances the map already has, which are greyed out."""
-        super().__init__(parent, "Annotate door")
-        grid = QGridLayout(self)
-        grid.setSpacing(2)
-        for row, names in enumerate(self.ROWS):
-            for column, name in enumerate(names):
-                grid.addWidget(self._button(name, assets, False), row, column)
-        grid.setRowMinimumHeight(len(self.ROWS), 8)  # a gap above the ways in
-        for column, name in enumerate(sprites.dungeon_lobbies[world]):
-            grid.addWidget(self._button(name, assets, name in taken), len(self.ROWS) + 1, column)
-        grid.addWidget(self._button(sprites.REACHABLE, assets, False), len(self.ROWS) + 1, self.ENTRANCES)
-        grid.addWidget(self._button(sprites.CHICKEN, assets, False), len(self.ROWS) + 1, len(self.ROWS[0]) - 1)
-
-    def _button(self, name, assets, taken):
+    def _button(self, name: str, picture: QPixmap | None, side: int, taken: bool = False) -> QToolButton:
+        """A button that picks this name: with its picture, enlarged to this many pixels across with hard edges,
+        or with its name where it has none. taken: it cannot be picked, and is greyed out."""
         button = QToolButton()
-        picture = assets.icon(name).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
-        icon = QIcon(picture)
-        if taken:
-            # Dark, where Qt's own greying of a button that cannot be pressed is pale
-            painter = QPainter(picture)
-            painter.fillRect(picture.rect(), QColor(0, 0, 0, 190))
-            painter.end()
-            icon.addPixmap(picture, QIcon.Mode.Disabled)
-        button.setIcon(icon)
-        button.setIconSize(QSize(32, 32))
-        button.setToolTip(name.replace("_", " "))
+        if picture is None:
+            button.setText(name)
+        else:
+            picture = picture.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+            icon = QIcon(picture)
+            if taken:
+                # Dark, where Qt's own greying of a button that cannot be pressed is pale
+                painter = QPainter(picture)
+                painter.fillRect(picture.rect(), QColor(0, 0, 0, 190))
+                painter.end()
+                icon.addPixmap(picture, QIcon.Mode.Disabled)
+            button.setIcon(icon)
+            button.setIconSize(QSize(side, side))
+            button.setToolTip(name.replace("_", " "))
         button.setEnabled(not taken)
         # Signals go to methods, never lambdas: Qt keeps a lambda that holds a widget alive, and the widget with it
         button.setObjectName(name)
@@ -218,23 +200,62 @@ class IconPicker(Picker):
         return button
 
 
+class IconPicker(Picker):
+    """The icons to put on a door: rows of marks, items and equipment, then the ways in. Those are this dungeon's
+    entrances, in the same four places for every dungeon, and a place the player can get to."""
+
+    # The marks; the items, with the two keys; the equipment; the upgrades. The sheet's slash mark is not here: it is
+    # the first sword
+    ROWS = (
+        ("Bomb Door", "Dash Door", "Trap Door", "Skull", "Checkmark", "Crossmark", "Peg Switch", "Blue Peg", "Orange Peg", "Drop"),
+        ("Bow", "Blue Boomerang", "Red Boomerang", "Hookshot", "Bombs", "Mushroom", "Magic Powder", "Fire Rod", "Ice Rod", "Lamp"),
+        ("Bombos", "Ether", "Quake", "Hammer", "Shovel", "Ocarina", "Bug Catching Net", "Book of Mudora", "Bottle", "Magic Mirror"),
+        ("Cane of Somaria", "Cane of Byrna", "Cape", "Pegasus Boots", "Power Glove", "Titans Mitts", "Flippers", "Moon Pearl", "Key Door", "Big Key Door"),
+        ("Fighter Sword", "Master Sword", "Tempered Sword", "Golden Sword", "Blue Shield", "Red Shield", "Mirror Shield", "Green Mail", "Blue Mail", "Red Mail"),
+        ("Magic Upgrade (1/2)", "Magic Upgrade (1/4)"),
+    )
+    ENTRANCES = 4  # the most a dungeon has
+    SIDE = 32
+
+    def __init__(self, parent, assets, world, taken):
+        """taken: the entrances the map already has, which are greyed out."""
+        super().__init__(parent, "Annotate door")
+        for row, names in enumerate(self.ROWS):
+            for column, name in enumerate(names):
+                self.grid.addWidget(self._button(name, assets.icon(name), self.SIDE), row, column)
+        self.grid.setRowMinimumHeight(len(self.ROWS), 8)  # a gap above the ways in
+        ways_in = len(self.ROWS) + 1
+        for column, name in enumerate(sprites.dungeon_lobbies[world]):
+            self.grid.addWidget(self._button(name, assets.icon(name), self.SIDE, name in taken), ways_in, column)
+        self.grid.addWidget(self._button(sprites.REACHABLE, assets.icon(sprites.REACHABLE), self.SIDE), ways_in, self.ENTRANCES)
+        self.grid.addWidget(self._button(sprites.CHICKEN, assets.icon(sprites.CHICKEN), self.SIDE), ways_in, len(self.ROWS[0]) - 1)
+
+
 class BossPicker(Picker):
     """The bosses a boss room can have, to pick the one it has."""
 
     ACROSS = 5
+    SIDE = 64
 
     def __init__(self, parent, assets):
         super().__init__(parent, "Boss")
-        grid = QGridLayout(self)
-        grid.setSpacing(2)
         for place, boss in enumerate(BOSSES):
-            button = QToolButton()
-            button.setIcon(QIcon(assets.boss(boss).scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))
-            button.setIconSize(QSize(64, 64))
-            button.setToolTip(boss)
-            button.setObjectName(boss)
-            button.clicked.connect(self._pick)
-            grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
+            self.grid.addWidget(self._button(boss, assets.boss(boss), self.SIDE), place // self.ACROSS, place % self.ACROSS)
+
+
+class EnemyPicker(Picker):
+    """The kinds one of a kill room's enemies can be, to pick the one it is."""
+
+    ACROSS = 10
+    SIDE = 40
+
+    def __init__(self, parent, assets):
+        super().__init__(parent, "Enemy")
+        for place, kind in enumerate([*PICKS, NA]):
+            button = self._button(kind, None if kind == NA else assets.enemy(kind), self.SIDE)
+            # All one size, the one with no picture too
+            button.setFixedSize(self.SIDE + 8, self.SIDE + 8)
+            self.grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
 
 
 class EgPicker(QDialog):
@@ -571,6 +592,7 @@ class MainWindow(QMainWindow):
         # Named as the randomizer names the settings they are for
         add_box("pottery", "Pottery", "For a seed with Pottery set to Dungeon Pots or Lottery: each room counts down its pots not yet emptied")
         add_box("enemy_drops", "Enemy Drops", "For a seed with Enemy Drops set to Underworld Enemies: each room counts down its enemies' drops not yet taken")
+        add_box("enemy_shuffle", "Enemy Shuffle", "For a seed with Enemy Shuffle on: each kill room shows its enemies, to pick the kind of each")
         self.status = QLabel("")  # what the mouse is over
         self.status.setMinimumWidth(50)
         row.addWidget(self.status, 1)
@@ -989,6 +1011,10 @@ class MainWindow(QMainWindow):
 
     def pick_boss(self) -> str | None:
         dialog = BossPicker(self, self.assets)
+        return dialog.choice if dialog.exec() else None
+
+    def pick_enemy(self) -> str | None:
+        dialog = EnemyPicker(self, self.assets)
         return dialog.choice if dialog.exec() else None
 
     def pick_eg_tile(self, page: GraphPage) -> rooms.Tile | None:
