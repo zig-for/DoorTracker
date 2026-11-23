@@ -49,7 +49,7 @@ from data.room_bounds import room_bounds
 from data.worlds_data import World
 from gui.Doors import bosses, kill_rooms
 from gui.Doors.checks import Drop
-from gui.Doors.graph_model import ENEMY_SIZE, LOBBY_REACH, THUMB, Edge, EnemySpot, GraphModel, TileState
+from gui.Doors.graph_model import CHECK_SIZE, ENEMY_SIZE, LOBBY_REACH, THUMB, Edge, EnemySpot, GraphModel, TileState
 from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
     DOORS,
@@ -99,7 +99,6 @@ MODEL_OPTIONS = {
     "dead_end_pull": "leaf_pull",
 }
 WORLD = 1_000_000  # scene half-extent
-CHECK_SIZE = 9.0  # side of a check's square, world units
 PLAYER_HEAD = 16.0  # side of the player's head, world units: one for each of its pixels
 CHECK_EDGE = 1.5  # how much of the square shows round a picture in it
 POT_EDGE = 2.0  # and round a pot
@@ -1309,6 +1308,10 @@ class GraphPage(QWidget):
         if hit.node is not None and hit.node in self._doors:
             # Check squares are not separate items either
             x, y = self.model.pos[hit.node]
+            # An enemy before a check: far out, a check is clicked from further off than its square reaches
+            for enemy in self._doors[hit.node].enemies:
+                if abs(scene_pos.x() - x - enemy.x) <= ENEMY_SIZE / 2 and abs(scene_pos.y() - y - enemy.y) <= ENEMY_SIZE / 2:
+                    return Hit(node=hit.node, enemy=(enemy.room, enemy.number))
             reach = max(CHECK_SIZE / 2, 5 / self.view.zoom())
             for check in self._doors[hit.node].checks:
                 if abs(scene_pos.x() - x - check.x) <= reach and abs(scene_pos.y() - y - check.y) <= reach:
@@ -1316,9 +1319,6 @@ class GraphPage(QWidget):
             for boss in self._doors[hit.node].bosses:
                 if abs(scene_pos.x() - x - boss.x) <= BOSS_SIZE / 2 and abs(scene_pos.y() - y - boss.y) <= BOSS_SIZE / 2:
                     return Hit(node=hit.node, boss=boss.tile)
-            for enemy in self._doors[hit.node].enemies:
-                if abs(scene_pos.x() - x - enemy.x) <= ENEMY_SIZE / 2 and abs(scene_pos.y() - y - enemy.y) <= ENEMY_SIZE / 2:
-                    return Hit(node=hit.node, enemy=(enemy.room, enemy.number))
             for kind, box, _left in self._doors[hit.node].counts():
                 if box.contains(scene_pos.x() - x, scene_pos.y() - y):
                     return Hit(node=hit.node, count=kind)

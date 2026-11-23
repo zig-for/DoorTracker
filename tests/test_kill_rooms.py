@@ -5,10 +5,10 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QToolButton
 
 import DoorsTracker
-from data.doors_sprite_data import REACHABLE
+from data.doors_sprite_data import REACHABLE, dungeon_lobbies
 from gui.Doors import kill_rooms
-from gui.Doors.graph_model import CheckState, DoorState
-from gui.Doors.kill_rooms import KILL_ROOMS, NA, PICKS, clearing
+from gui.Doors.graph_model import CHECK_SIZE, ENEMY_SIZE, CheckState, DoorState
+from gui.Doors.kill_rooms import KILL_ROOMS, NA, PICKS, ROOMS_BY_TILE, clearing
 from gui.Doors.logic import holds
 from gui.Doors.rules import boss_rules
 from support import At, model_leading_to, new_model
@@ -47,6 +47,49 @@ def test_killing_a_rooms_enemies_takes_what_the_randomizer_says_it_does():
     # Nothing in the tile room has to be killed: a seed with enemies shuffled can put something there that does
     assert original("GT Tile Room") is True
     assert clearing("GT Tile Room", ("Terrorpin", NA)) == "Hammer"
+
+
+def test_an_enemy_with_less_health_in_one_world_is_taken_as_having_the_less():
+    # A dungeon's rooms are in whichever world the seed joins them to. Five Ravens take five bombs in the light
+    # world and ten in the dark, where a room's are eight at the most
+    assert holds(clearing("Desert Four Statues", ("Raven",) * 5), frozenset({"Bombs"}))
+
+
+def test_a_kill_rooms_door_that_is_a_way_in_to_the_dungeon_takes_no_killing():
+    model = new_model("Ganons_Tower")
+    way = "GT DMs Room SW"
+    model.add_tile(KILL_ROOMS["GT DMs Room"].tile, has_been_lit=True)
+    model.set_items(frozenset())
+    assert model.door_state(way) is DoorState.BLOCKED
+    lobbies = dungeon_lobbies[model.tab_world]
+    model.annotate(way, next(iter(lobbies)), lobbies)
+    assert model.door_state(way) is DoorState.LINKED
+
+
+def test_no_enemy_is_drawn_over_a_check():
+    model = new_model("Ganons_Tower", enemy_shuffle=True)
+    for tile in ROOMS_BY_TILE:
+        model.add_tile(tile, has_been_lit=True)
+    apart = (ENEMY_SIZE + CHECK_SIZE) / 2
+    for node in model.nodes():
+        for enemy in model.enemy_spots(node):
+            for check in model.check_spots(node):
+                assert abs(enemy.x - check.x) >= apart or abs(enemy.y - check.y) >= apart, (enemy.room, check.name)
+
+
+def test_a_click_on_an_enemy_beside_a_check_is_on_the_enemy_however_far_out_the_view_is(window, app):
+    room = "Hyrule Dungeon Armory Boomerang"  # its enemy is the one that drops a key
+    window.select_dungeon("Hyrule_Castle")
+    page = window.pages["Hyrule_Castle"]
+    page.model.add_tile(KILL_ROOMS[room].tile, has_been_lit=True)
+    window.set_option("enemy_shuffle", True)
+    page.fit_view()
+    app.processEvents()
+    # Far out, a check is clicked from further off than its square reaches
+    page.view.zoom_at(page.view.rect().center(), 0.5 / page.view.zoom())
+    node, spot = next((n, s) for n in page.model.nodes() for s in page.model.enemy_spots(n) if s.room == room)
+    x, y = page.model.pos[node]
+    assert page.hit_at(At(page.view.mapFromScene(QPointF(x + spot.x, y + spot.y)))).enemy == (room, spot.number)
 
 
 def test_a_way_of_killing_that_takes_more_magic_than_one_bar_takes_enough_magic():

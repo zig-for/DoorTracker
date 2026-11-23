@@ -136,9 +136,10 @@ _WORLD = SimpleNamespace(
 
 
 class _Region:
-    """A dungeon's region: in neither world, which some enemies' health goes by."""
+    """A dungeon's region. The randomizer has it in the light world, the dark, or both, by what the seed joins
+    it to, and some enemies have less health in one. Which is not known: in both, it takes the lesser."""
 
-    is_light_world = is_dark_world = False
+    is_light_world = is_dark_world = True
 
 
 _REGION = _Region()

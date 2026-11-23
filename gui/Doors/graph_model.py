@@ -63,6 +63,7 @@ for _name, _check in checks.items():
     CHECKS_BY_TILE[_check["tile"]].append(_name)
 
 THUMB = 128  # supertile thumbnail edge
+CHECK_SIZE = 9.0  # side of a check's square, world units
 ENEMY_SIZE = 8.0  # side of one of a kill room's enemies, world units
 ENEMIES_ACROSS = 5  # the most of them in a row
 COMPACT_W = 104  # pass-through tiles collapse to a pill
@@ -1703,11 +1704,13 @@ class GraphModel:
 
     def _kill_ways(self) -> dict[str, str]:
         """Way out of a kill room that takes killing its enemies -> the room. Some of a room's doors take it only
-        as trap doors, which a seed can make them: those once they are marked as one."""
+        as trap doors, which a seed can make them: those once they are marked as one. A door the seed has made a
+        way in to the dungeon takes none, as challenge_room_rules in Rules.py has it."""
+        ways_in = {lobby.door for lobby in self.lobby_doors if lobby.lobby != REACHABLE}
         found = {}
         for name, room in KILL_ROOMS.items():
             traps = [way for way in room.trap_ways if self.special_doors.get(way) == "Trap Door"]
-            found |= dict.fromkeys((*room.ways, *traps), name)
+            found |= {way: name for way in (*room.ways, *traps) if way not in ways_in}
         return found
 
     def _unkillable(self, room: str) -> set[int]:
@@ -1738,6 +1741,7 @@ class GraphModel:
         if node in self.compact or self.is_hidden_dark(node.tile):
             return []
         split = self.rooms.part_count(node.tile) > 1
+        checks = self.check_spots(node)
         spots = []
         for name in ROOMS_BY_TILE.get(node.tile, ()):
             enemies = KILL_ROOMS[name].enemies
@@ -1756,6 +1760,16 @@ class GraphModel:
             edge = THUMB / 2 - 2
             left = min(max((x / 512 - 0.5) * THUMB - wide / 2, -edge), edge - wide)
             top = min(max((y / 512 - 0.5) * THUMB - tall / 2, -edge), edge - tall)
+            # Not over a check's square: an enemy that drops a key stands where its check is drawn. The rows go
+            # above or below the checks in their way, whichever is nearest
+            reach = CHECK_SIZE / 2
+
+            def covered(top: float) -> bool:
+                return any(left - reach < check.x < left + wide + reach and top - reach < check.y < top + tall + reach for check in checks)
+
+            if covered(top):
+                clear = [at for check in checks for at in (check.y + reach, check.y - reach - tall) if -edge <= at <= edge - tall and not covered(at)]
+                top = min(clear, key=lambda at: abs(at - top), default=top)
             for place, (number, kind, picture) in enumerate(shown):
                 column, row = place % ENEMIES_ACROSS, place // ENEMIES_ACROSS
                 spots.append(EnemySpot(name, number, kind, picture, left + (column + 0.5) * ENEMY_SIZE, top + (row + 0.5) * ENEMY_SIZE))
