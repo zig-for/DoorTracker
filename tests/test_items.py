@@ -78,11 +78,13 @@ def test_enough_magic_is_a_bar_that_holds_it_or_bottles_to_fill_the_bar_again():
     assert enough_magic(161) is False
 
 
-def test_the_bottles_cell_counts_them():
+def test_the_bottles_cell_counts_them(app):
     bottles = next(slot for slot in SLOTS if slot.counted)
     held = clicked(bottles, clicked(bottles, frozenset(), 1), 1)
     assert held == {"Bottle", "2 Bottles"}
-    assert slot_picture(bottles, held).toImage() != slot_picture(bottles, frozenset({"Bottle"})).toImage()
+    # Each count has its own number on the bottle, from one up
+    one, two = slot_picture(bottles, frozenset({"Bottle"})).toImage(), slot_picture(bottles, held).toImage()
+    assert one != two and one != picture_in_cell("Bottle")
     assert clicked(bottles, held, -1) == {"Bottle"}
 
 

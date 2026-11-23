@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 
-from PySide6.QtCore import QPointF, QRect, Qt
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import QAbstractButton, QGridLayout, QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget
 
@@ -42,7 +42,7 @@ class Slot:
     items: tuple[str, ...]
     together: bool = False  # the items share it; otherwise each takes the place of the one before
     start: str | None = None  # picture of what the player has in it from the start
-    counted: bool = False  # each item is one more of the same thing: how many are held is written on it
+    counted: bool = False  # each item is one more of the same thing, up to four: how many are held is put on it
 
 
 def one(item: str) -> Slot:
@@ -64,6 +64,9 @@ EQUIPMENT = [
     Slot(("Blue Mail", "Red Mail"), start="Green Mail"),
 ]
 SLOTS = [slot for row in (*MENU, ABILITIES, EQUIPMENT, UPGRADES) for slot in row]
+SWORDS = EQUIPMENT[0].items  # each one's picture has its level on it, 1 to 4
+NUMBER_FROM = 18  # that number is right of this and below it, in a picture 32 across
+NUMBER_EDGE = 2  # how far the edge put round it reaches: one of the picture's own pixels, which are doubled
 # A counted slot's items are one item, however many of it
 ITEMS = [item for slot in SLOTS for item in (*([slot.start] if slot.start else []), *(slot.items[:1] if slot.counted else slot.items))]
 # The tracker's name for a dungeon -> what the keys strip calls it, in the order of the tabs
@@ -121,22 +124,30 @@ def slot_picture(slot: Slot, held: frozenset[str]) -> QPixmap:
         item = mine[-1] if mine else slot.items[0]
         shown = picture(slot.start if slot.start and not mine else PICTURE_NAMES.get(item, item))
         painter.drawPixmap((CELL - shown.width()) // 2, 0, shown)
-        if slot.counted and len(mine) > 1:
-            write_count(painter, len(mine))
+        if slot.counted and mine:
+            painter.drawPixmap(0, 0, number(len(mine)))
     painter.end()
     return cell if mine or slot.start else greyed(cell)
 
 
-def write_count(painter: QPainter, count: int) -> None:
-    """Write a number over the middle of a cell's picture."""
-    font = QFont()
-    font.setPixelSize(13)
-    font.setBold(True)
-    painter.setFont(font)
-    # White on a black edge, to read over the picture
-    for dx, dy, colour in ((1, 1, "black"), (-1, -1, "black"), (1, -1, "black"), (-1, 1, "black"), (0, 0, "white")):
-        painter.setPen(QColor(colour))
-        painter.drawText(QRect(dx, dy, CELL, CELL), Qt.AlignmentFlag.AlignCenter, str(count))
+@cache
+def number(count: int) -> QPixmap:
+    """A number from 1 to 4, where and as the picture of the sword of that level has it: in the bottom right
+    corner, with a dark edge added all round it to read over another picture."""
+    sword = picture(SWORDS[count - 1]).toImage()
+    white, edge = QColor(248, 248, 248), QColor(40, 40, 40)
+    # The corner has nothing of the sword in it but the number
+    corner = [(x, y) for x in range(NUMBER_FROM, sword.width()) for y in range(NUMBER_FROM, sword.height())]
+    marks = [(x, y) for x, y in corner if sword.pixelColor(x, y) == white]
+    made = QImage(sword.size(), QImage.Format.Format_ARGB32)
+    made.fill(Qt.GlobalColor.transparent)
+    for x, y in marks:
+        for near_x in range(max(0, x - NUMBER_EDGE), min(made.width(), x + NUMBER_EDGE + 1)):
+            for near_y in range(max(0, y - NUMBER_EDGE), min(made.height(), y + NUMBER_EDGE + 1)):
+                made.setPixelColor(near_x, near_y, edge)
+    for x, y in marks:
+        made.setPixelColor(x, y, white)
+    return QPixmap.fromImage(made)
 
 
 def hearts_picture(count: int) -> QPixmap:
@@ -146,7 +157,14 @@ def hearts_picture(count: int) -> QPixmap:
     painter = QPainter(cell)
     heart = picture("Heart Container")
     painter.drawPixmap((CELL - heart.width()) // 2, 0, heart)
-    write_count(painter, count)
+    font = QFont()
+    font.setPixelSize(13)
+    font.setBold(True)
+    painter.setFont(font)
+    # White on a black edge, to read over the red
+    for dx, dy, colour in ((1, 1, "black"), (-1, -1, "black"), (1, -1, "black"), (-1, 1, "black"), (0, 0, "white")):
+        painter.setPen(QColor(colour))
+        painter.drawText(cell.rect().translated(dx, dy), Qt.AlignmentFlag.AlignCenter, str(count))
     painter.end()
     return cell
 
