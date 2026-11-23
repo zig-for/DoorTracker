@@ -87,6 +87,7 @@ class RoomLink:
     b: str
     kind: EdgeKind  # WARP or HOLE
     both_ways: bool
+    drop: str | None = None  # a hole that is a door and falls between the same rooms: drawn in place of this one
 
 
 def _read_doors() -> dict[str, Door]:
@@ -150,6 +151,8 @@ DEFAULT_DOORS.update(MANUAL_DROPS)
 ONE_WAY = {name for name, _target in list(falldown_pits) + list(dungeon_warps)} | set(MANUAL_DROPS)
 # The holes among them. A seed can send a hole somewhere else; a warp always goes where it goes
 HOLES = {name for name, _target in falldown_pits} | set(MANUAL_DROPS)
+# Where the holes that are doors land: only ever fallen onto
+DROP_ENDS = frozenset(MANUAL_DROPS.values())
 
 # Rooms with no doors, by region
 DOORLESS_ROOMS = {
@@ -158,10 +161,38 @@ DOORLESS_ROOMS = {
     "Hera Fairies": DoorlessRoom((7, 10), "Tower_of_Hera", 0.27, 0.25),
 }
 
-# Known warp tile and hole positions. warp or hole: (start, landing), each 0..1 in its supertile picture
+# Where each warp's tile is in its supertile's picture, 0..512: the middle of the tile, read from the map. A warp
+# lands at the same place in the room it leads to, as a fall does
+WARP_TILES = {
+    # The left of the room's two, which both lead to the courtyard
+    "Eastern Fairies' Warp": (184, 136),
+    "Hera Fairies' Warp": (168, 200),
+    "PoD Stalfos Basement Warp": (408, 136),
+    "PoD Callback Warp": (376, 392),
+    "Ice Fairy Warp": (376, 168),
+    "Mire Lone Warp Warp": (136, 136),
+    "Mire Warping Pool Warp": (136, 376),
+    "GT Compass Room Warp": (72, 136),
+    # Under the moving spikes
+    "GT Spike Crystals Warp": (456, 136),
+    "GT Warp Maze - Rail Choice Right Warp": (152, 344),
+    "GT Hidden Star Warp": (392, 392),
+}
+# The middle of each hole's pit, likewise
+PITS = {
+    # The left of the room's two
+    "Eastern Courtyard Potholes": (224, 128),
+    "Ice Freezors Ledge Hole": (184, 392),
+    "Ice Crystal Right Blue Hole": (384, 384),
+    # The left of the room's two
+    "Ice Backwards Room Hole": (336, 112),
+}
+# Known warp tile and hole positions. warp or hole: (start, landing), each 0..1 in its supertile picture. A hole
+# with none is drawn from the bottom of its room to the top of the one below
 WARP_SPOTS = {
-    # Under the moving spikes; lands at the right of the Firesnake room
-    "GT Spike Crystals Warp": ((0.885, 0.26), (0.89, 0.265)),
+    **{name: ((x / 512, y / 512), (x / 512, y / 512)) for name, (x, y) in (WARP_TILES | PITS).items()},
+    # This warp and the Warp Hint's lead to each other: each end is the room's own tile
+    "PoD Warp Room Warp": ((360 / 512, 136 / 512), (392 / 512, 136 / 512)),
     # Off the east side of the landing, where its rail has a gap. A fall lands at the same place in the room below
     "PoD Big Key Landing Hole": ((0.57, 0.27), (0.57, 0.27)),
 }
@@ -237,6 +268,13 @@ def _build_room_links() -> tuple[Mapping[str, Door], tuple[RoomLink, ...]]:
                     queue.append(further)
         return out
 
+    def side(place, bottom):
+        """The port moved to the middle of the bottom or top side of its room."""
+        record = SUPERTILES[place.tile]
+        boxes = record.areas[place.part] if record.areas else record.live
+        y = max(box[3] for box in boxes) if bottom else min(box[1] for box in boxes)
+        return replace(place, x=(min(box[0] for box in boxes) + max(box[2] for box in boxes)) / 1024, y=y / 512)
+
     ports, found = {}, {}
     for kind, pairs in ((EdgeKind.WARP, dungeon_warps), (EdgeKind.HOLE, falldown_pits)):
         for name, target in pairs:
@@ -250,8 +288,27 @@ def _build_room_links() -> tuple[Mapping[str, Door], tuple[RoomLink, ...]]:
                     continue  # same supertile: see _build_parts
                 # Keyed by part: two warps can join the same pair of supertiles
                 found.setdefault((part_of(start), part_of(end), kind), (name, start, end))
+    # The holes that are doors, by the (from, to) rooms each falls between
+    drops = {(part_of(DOORS[a]), part_of(DOORS[b])): a for a, b in MANUAL_DROPS.items()}
+    # The (from, to) rooms of the holes here
+    holes = {(ta, tb) for ta, tb, kind in found if kind is EdgeKind.HOLE}
+
+    def led(start, end, falls):
+        """Whether the falls lead from one room to the other."""
+        seen, queue = {start}, [start]
+        while queue:
+            room = queue.pop()
+            for a, b in falls:
+                if a == room and b not in seen:
+                    seen.add(b)
+                    queue.append(b)
+        return end in seen
+
     links = []
     for (ta, tb, kind), (name, start, end) in found.items():
+        if kind is EdgeKind.HOLE and led(ta, tb, holes - {(ta, tb)}):
+            holes.remove((ta, tb))
+            continue  # the other holes lead there already
         both_ways = (tb, ta, kind) in found
         if both_ways and (tb, ta) < (ta, tb):
             continue  # the reverse warp covers this pair
@@ -259,8 +316,10 @@ def _build_room_links() -> tuple[Mapping[str, Door], tuple[RoomLink, ...]]:
         if name in WARP_SPOTS:
             (sx, sy), (ex, ey) = WARP_SPOTS[name]
             start, end = replace(start, x=sx, y=sy), replace(end, x=ex, y=ey)
+        elif kind is EdgeKind.HOLE:
+            start, end = side(start, bottom=True), side(end, bottom=False)
         ports[a], ports[b] = start, end
-        links.append(RoomLink(a, b, kind, both_ways))
+        links.append(RoomLink(a, b, kind, both_ways, drops.get((ta, tb)) if kind is EdgeKind.HOLE else None))
     return MappingProxyType(ports), tuple(links)
 
 

@@ -4,7 +4,7 @@ import ast
 
 from data.doors_data import door_coordinates
 from gui.Doors.randomizer import syntax
-from gui.Doors.rooms import DOORS, ROOM_LINKS, ROOM_PORTS, SPLIT, SUPERTILES, WHOLE
+from gui.Doors.rooms import DOORS, ROOM_LINKS, ROOM_PORTS, SPLIT, SUPERTILES, WARP_SPOTS, WHOLE
 from gui.Doors.rules import called
 
 from ALttPDoorRandomizer import Doors  # noqa: E402  after gui.Doors.randomizer, which makes it importable
@@ -44,3 +44,7 @@ def test_warps_and_holes_run_between_two_supertiles():
         assert link.a not in DOORS and link.b not in DOORS, link
         for view in (SPLIT, WHOLE):
             assert view.node(link.a).tile == start.tile and view.node(link.b).tile == end.tile
+
+
+def test_every_known_spot_is_of_a_warp_or_hole_that_is_drawn():
+    assert set(WARP_SPOTS) <= set(ROOM_PORTS)

@@ -3,6 +3,7 @@
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtTest import QTest
 
+from gui.Doors.rooms import DOORS
 from gui.qt.graph_page import Hit
 from support import grow, open_doors, positions
 
@@ -66,6 +67,20 @@ def test_a_file_naming_doors_this_version_does_not_know_is_still_drawn(window, a
     page.load_yaml(saved)
     app.processEvents()
     assert set(page._rooms) == set(page.model.nodes())
+
+
+def test_a_hole_that_lands_where_the_original_games_does_is_not_picked_to_link(window, app):
+    window.select_dungeon("Ice_Palace")
+    page = window.pages["Ice_Palace"]
+    hole = "Ice Bomb Drop Hole"
+    for as_they_were in (True, False):
+        page.model.settings["vanilla_drops"] = as_they_were
+        page.model.add_tile(DOORS[hole].tile, has_been_lit=True)
+        page.rebuild()
+        page.fit_view()
+        app.processEvents()
+        QTest.mouseClick(page.view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, on_screen(page, *page.model.port(hole)))
+        assert page.selected_door == (None if as_they_were else hole)
 
 
 def test_linking_two_doors_by_clicking_then_removing_the_link(window, app):
