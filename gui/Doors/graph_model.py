@@ -211,7 +211,6 @@ class GraphModel:
         self.show_all_doors = False
         self.linking = False  # a link is being made: every door is shown, to pick its other end from
         self.auto_join = True
-        self.enemy_shuffle = False  # the seed has enemies shuffled: a kill room's are the ones the player picks
         self.spacing = float(REPEL_RANGE)  # repulsion reach
         self.leaf_pull = 2.5  # pull boost for blocks linked to a single other block
         self.circle_repulsion = False  # repel as one enclosing circle per block
@@ -223,6 +222,11 @@ class GraphModel:
     def rooms(self) -> Rooms:
         """Room lookups as shown on the map: an unlit dark supertile is one card, whatever its parts."""
         return self._shown_rooms if self.experimental_flags.get("split_rooms", True) else rooms.WHOLE
+
+    @property
+    def enemy_shuffle(self) -> bool:
+        """The seed has enemies shuffled: a kill room's are the ones the player picks."""
+        return self.experimental_flags["enemy_shuffle"]
 
     @property
     def real_rooms(self) -> Rooms:

@@ -18,9 +18,9 @@ ROOM = "PoD Mimics 1"
 RED = KILL_ROOMS[ROOM].enemies[0].number
 
 
-def mimic_room(way_in):
+def mimic_room(way_in, **flags):
     """A map of the room's supertile, with a way in at one of the room's doors."""
-    model = new_model("Palace_of_Darkness")
+    model = new_model("Palace_of_Darkness", **flags)
     model.add_tile(KILL_ROOMS[ROOM].tile, has_been_lit=True)
     model.annotate(way_in, REACHABLE, [])
     return model
@@ -77,11 +77,9 @@ def test_a_kill_rooms_way_out_takes_killing_the_enemies_it_has():
 
 
 def test_with_enemies_shuffled_a_kill_room_takes_killing_the_enemies_picked_for_it():
-    model = mimic_room("PoD Mimics 1 SW")
+    model = mimic_room("PoD Mimics 1 SW", enemy_shuffle=True)
     way = "PoD Mimics 1 NW"
     model.set_items(frozenset({"Fighter Sword"}))
-    model.enemy_shuffle = True
-    model.update()
     # Nothing is known of its enemies yet
     assert model.door_state(way) is DoorState.OPEN
     model.set_enemy(ROOM, RED, "RedMimic")
@@ -89,14 +87,13 @@ def test_with_enemies_shuffled_a_kill_room_takes_killing_the_enemies_picked_for_
     model.set_enemy(ROOM, RED, "Stalfos")
     assert model.door_state(way) is DoorState.OPEN
     # What was picked is for a seed with enemies shuffled
-    model.enemy_shuffle = False
+    model.experimental_flags["enemy_shuffle"] = False
     model.update()
     assert model.door_state(way) is DoorState.BLOCKED
 
 
 def test_only_the_enemies_the_items_do_not_kill_are_marked():
-    model = new_model("Castle_Tower")
-    model.enemy_shuffle = True
+    model = new_model("Castle_Tower", enemy_shuffle=True)
     room = "Tower Gold Knights"
     first, second = (enemy.number for enemy in KILL_ROOMS[room].enemies)
     model.set_items(frozenset({"Fighter Sword", "Ice Rod"}))

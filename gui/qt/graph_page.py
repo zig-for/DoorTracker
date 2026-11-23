@@ -95,7 +95,6 @@ MODEL_OPTIONS = {
     "show_all_doors": "show_all_doors",
     "auto_join": "auto_join",
     "circle_repulsion": "circle_repulsion",
-    "enemy_shuffle": "enemy_shuffle",
     "spacing": "spacing",
     "dead_end_pull": "leaf_pull",
 }

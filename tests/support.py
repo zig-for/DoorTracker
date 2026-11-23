@@ -89,6 +89,7 @@ def new_model(tab="Turtle_Rock", **flags):
         "vanilla_drops": True,
         "trim_rooms": True,
         "split_rooms": True,
+        "enemy_shuffle": False,
     }
     settings.update(flags)
     return GraphModel(dungeon_worlds[tab], settings)
