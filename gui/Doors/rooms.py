@@ -181,8 +181,6 @@ WARP_TILES = {
 PITS = {
     # The left of the room's two
     "Eastern Courtyard Potholes": (224, 128),
-    "Ice Freezors Ledge Hole": (184, 392),
-    "Ice Crystal Right Blue Hole": (384, 384),
     # The left of the room's two
     "Ice Backwards Room Hole": (336, 112),
 }
@@ -287,8 +285,12 @@ def _build_room_links() -> tuple[Mapping[str, Door], tuple[RoomLink, ...]]:
                     continue  # same supertile: see _build_parts
                 # Keyed by part: two warps can join the same pair of supertiles
                 found.setdefault((part_of(start), part_of(end), kind), (name, start, end))
+    # The rooms joined by a hole that is a door, which is drawn as a drop
+    dropped = {(part_of(DOORS[a]), part_of(DOORS[b])) for a, b in MANUAL_DROPS.items()}
     links = []
     for (ta, tb, kind), (name, start, end) in found.items():
+        if kind is EdgeKind.HOLE and (ta, tb) in dropped:
+            continue  # the same pit, from another side
         both_ways = (tb, ta, kind) in found
         if both_ways and (tb, ta) < (ta, tb):
             continue  # the reverse warp covers this pair
