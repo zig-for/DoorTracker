@@ -254,6 +254,8 @@ class GraphModel:
         self._held_unrouted: frozenset[str] = frozenset()  # the same, for a check with no way to it
         self._routed_doors: set[str] = set()  # the doors and passages the map leads to
         self._passable_doors: set[str] = set()  # and those of them the player's items let them go out by
+        self._unkilled: dict[str, set[int]] = {}  # kill room -> its enemies the player's items do not kill, by number
+        self._kill_locked: set[str] = set()  # the ways out of a kill room that takes killing them
         self.player: Player | None = None
         self.visited: set[Node] = set()  # where the player has been; saved as reached_parts
         self.used_entrances: set[str] = set()  # see assumed()
@@ -970,12 +972,8 @@ class GraphModel:
         # linked to is locked only if marked too
         locked = big_key_passages | {door for door, icon in self.special_doors.items() if icon == "Big Key Door"}
         big_key = BIG_KEYS[self.dungeon_name]
-        # Way out of a kill room -> what killing its enemies takes. Some of its doors take it only as trap doors,
-        # which a seed can make them: those once they are marked as one
-        killed = {}
-        for name, room in KILL_ROOMS.items():
-            traps = [way for way in room.trap_ways if self.special_doors.get(way) == "Trap Door"]
-            killed |= {way: self.kill_rule(name) for way in (*room.ways, *traps)}
+        # Way out of a kill room -> what killing its enemies takes
+        killed = {way: self.kill_rule(room) for way, room in self._kill_ways().items()}
 
         def arrive(name: str, down: int) -> None:
             for region in regions_at(name):
@@ -1025,6 +1023,8 @@ class GraphModel:
         self._reachable, self._held, self._passable_doors = self._walk(starts, self.items)
         # For a check the map does not lead to, what gets done on the way to it is not known: only items are asked
         self._held_unrouted = self._held | EVENTS
+        self._unkilled = {room: self._unkillable(room) for room in KILL_ROOMS}
+        self._kill_locked = {way for way, room in self._kill_ways().items() if self._unkilled[room]}
 
     def set_items(self, items: frozenset[str]) -> None:
         self.items = items
@@ -1658,6 +1658,9 @@ class GraphModel:
 
     def door_state(self, door: str) -> DoorState:
         """How a door's dot is drawn, as far as the map and the player's items say."""
+        # A kill room's door stays shut on enemies the player cannot kill, whatever else the door is
+        if door in self._kill_locked:
+            return DoorState.BLOCKED
         if door in INTERIOR_DOORS:
             return DoorState.INTERIOR
         if door in self._linked_doors or door in self.lobby_door_names():
@@ -1693,9 +1696,34 @@ class GraphModel:
         """What killing a kill room's enemies takes."""
         return clearing(room, self.enemy_kinds(room))
 
-    def can_clear(self, room: str) -> bool:
-        """Whether the player's items kill a kill room's enemies."""
-        return holds(self.kill_rule(room), self._held, self._reachable)
+    def _kill_ways(self) -> dict[str, str]:
+        """Way out of a kill room that takes killing its enemies -> the room. Some of a room's doors take it only
+        as trap doors, which a seed can make them: those once they are marked as one."""
+        found = {}
+        for name, room in KILL_ROOMS.items():
+            traps = [way for way in room.trap_ways if self.special_doors.get(way) == "Trap Door"]
+            found |= dict.fromkeys((*room.ways, *traps), name)
+        return found
+
+    def _unkillable(self, room: str) -> set[int]:
+        """The numbers of a kill room's enemies that the player's items do not kill: none when they kill the room.
+        Each that they would not kill on its own; or, when it is only all together that they do not, every one
+        that has to be killed. The randomizer's rule for a room can ask for more than each enemy alone does."""
+        kinds = self.enemy_kinds(room)
+        if holds(clearing(room, kinds), self._held, self._reachable):
+            return set()
+        enemies = KILL_ROOMS[room].enemies
+        counted = [(place, enemy.number) for place, enemy in enumerate(enemies) if kinds[place] != NA]
+        alone = set()
+        for place, number in counted:
+            only = tuple(kind if at == place else NA for at, kind in enumerate(kinds))
+            if not holds(clearing(room, only), self._held, self._reachable):
+                alone.add(number)
+        return alone or {number for _place, number in counted}
+
+    def unkilled(self, room: str) -> set[int]:
+        """The numbers of a kill room's enemies that the player's items do not kill; see _unkillable."""
+        return self._unkilled[room]
 
     def enemy_spots(self, node: Node) -> list[EnemySpot]:
         """The enemies drawn on a node, for each kill room on it, in a seed with enemies shuffled. None on a pill,

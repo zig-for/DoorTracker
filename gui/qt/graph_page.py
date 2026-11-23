@@ -619,7 +619,7 @@ class DoorsItem(QGraphicsItem):
         # A kill room's enemies, each on a plate
         half = ENEMY_SIZE / 2
         for enemy in self.enemies:
-            clear = page.model.can_clear(enemy.room)
+            clear = enemy.number not in page.model.unkilled(enemy.room)
             painter.setPen(QPen(QColor(OUTLINE if clear else BLOCKED), 1))
             painter.setBrush(QColor(ENEMY_PLATE_NA if enemy.kind == kill_rooms.NA else ENEMY_PLATE if clear else ENEMY_PLATE_BLOCKED))
             painter.drawRect(QRectF(enemy.x - half, enemy.y - half, ENEMY_SIZE, ENEMY_SIZE))

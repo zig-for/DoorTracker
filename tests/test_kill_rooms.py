@@ -74,6 +74,33 @@ def test_with_enemies_shuffled_a_kill_room_takes_killing_the_enemies_picked_for_
     assert model.door_state(way) is DoorState.BLOCKED
 
 
+def test_only_the_enemies_the_items_do_not_kill_are_marked():
+    model = new_model("Castle_Tower")
+    model.enemy_shuffle = True
+    room = "Tower Gold Knights"
+    first, second = (enemy.number for enemy in KILL_ROOMS[room].enemies)
+    model.set_items(frozenset({"Fighter Sword", "Ice Rod"}))
+    model.set_enemy(room, first, "RedMimic")
+    model.set_enemy(room, second, "Stalfos")
+    assert model.unkilled(room) == {first}
+    # Each of these dies to what is held, but the randomizer's rule for the two together asks for more
+    model.set_enemy(room, first, "Raven")
+    model.set_enemy(room, second, "Buzzblob")
+    assert model.unkilled(room) == {first, second}
+    model.set_items(frozenset({"Bow"}))
+    assert model.unkilled(room) == set()
+
+
+def test_a_kill_rooms_door_inside_its_supertile_is_drawn_as_blocked_while_its_enemies_cannot_be_killed():
+    model = new_model("Eastern_Palace")
+    model.add_tile(KILL_ROOMS["Eastern Single Eyegore"].tile, has_been_lit=True)
+    way = "Eastern Single Eyegore NE"
+    model.set_items(frozenset({"Fighter Sword"}))
+    assert model.door_state(way) is DoorState.BLOCKED
+    model.set_items(frozenset({"Bow"}))
+    assert model.door_state(way) is DoorState.INTERIOR
+
+
 def test_a_door_a_seed_can_make_a_trap_door_takes_killing_them_once_marked_as_one():
     way = "Eastern Single Eyegore ES"
     model = new_model("Eastern_Palace")
