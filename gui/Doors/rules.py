@@ -18,7 +18,7 @@ import ast
 
 from data.doors_data import regions_to_doors
 from gui.Doors.checks import checks
-from gui.Doors.logic import BLUE, EITHER, HEARTS, ORANGE, READABLE, ZELDA_DELIVERED, Rule
+from gui.Doors.logic import BLUE, EITHER, HEARTS, ORANGE, READABLE, ZELDA_DELIVERED, Rule, combine, enough_magic
 from gui.Doors.randomizer import dungeon_regions, syntax
 
 # After gui.Doors.randomizer, which makes the randomizer importable
@@ -51,21 +51,6 @@ def called(node: ast.AST) -> str | None:
 
 def text(node: ast.AST) -> str | None:
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
-
-
-def combine(kind: str, parts: list[Rule]) -> Rule:
-    """("all" | "any", rules) with the constants folded away and rules of the same kind merged in."""
-    empty = kind == "all"  # an empty "all" is met, an empty "any" is not
-    kept: list[Rule] = []
-    for part in parts:
-        if part is (not empty):
-            return not empty
-        for inner in part[1:] if isinstance(part, tuple) and part[0] == kind else [part]:
-            if inner is not empty and inner not in kept:
-                kept.append(inner)
-    if not kept:
-        return empty
-    return kept[0] if len(kept) == 1 else (kind, *kept)
 
 
 class Reader:
@@ -109,6 +94,13 @@ class Reader:
         if name == "Reach" and len(node.args) == 3 and text(node.args[1]) == "Region":
             region = text(node.args[0])
             return ("reached", region) if region in self.regions else True
+        # Enough magic: Primitive("can_extend_magic", player, how much) or state.can_extend_magic(player, how much),
+        # where no number is 16. One that is not written out as a number is not known, so met
+        if (text(node.args[0]) if name == "Primitive" and node.args else name) == "can_extend_magic":
+            amounts = node.args[2:3] if name == "Primitive" else node.args[1:2]
+            if not amounts:
+                return enough_magic(16)
+            return enough_magic(amounts[0].value) if isinstance(amounts[0], ast.Constant) and isinstance(amounts[0].value, int) else True
         if name == "Primitive" and len(node.args) == 2:
             return self.test(str(text(node.args[0])))
         if name == "Primitive" and text(node.args[0]) == "has_hearts" and len(node.args) == 3:

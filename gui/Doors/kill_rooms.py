@@ -15,9 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from gui.Doors.checks import checks
-from gui.Doors.logic import READABLE, Rule
+from gui.Doors.logic import READABLE, Rule, combine, enough_magic
 from gui.Doors.rooms import SUPERTILES, Tile
-from gui.Doors.rules import combine
 
 # After gui.Doors.rooms, which goes by gui.Doors.randomizer: that makes these importable
 from ALttPDoorRandomizer.Items import item_table  # noqa: E402
@@ -162,8 +161,9 @@ def _rule(rule) -> Rule:
         if item not in item_table:
             return False
         return item if item in READABLE else True
-    # More magic than one bar holds, which takes a bottle and a potion shop: not known, so met
-    return True
+    # More magic than one bar holds: the only other kind of rule the randomizer's kill rules are made of
+    assert kind == RuleType.ExtendMagic, kind
+    return enough_magic(rule.principal)
 
 
 class _Choices:

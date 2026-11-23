@@ -178,13 +178,15 @@ class IconPicker(Picker):
     """The icons to put on a door: rows of marks, items and equipment, then the ways in. Those are this dungeon's
     entrances, in the same four places for every dungeon, and a place the player can get to."""
 
-    # The marks; the items, with the two keys; the equipment. The sheet's slash mark is not here: it is the first sword
+    # The marks; the items, with the two keys; the equipment; the upgrades. The sheet's slash mark is not here: it is
+    # the first sword
     ROWS = (
         ("Bomb Door", "Dash Door", "Trap Door", "Skull", "Checkmark", "Crossmark", "Peg Switch", "Blue Peg", "Orange Peg", "Drop"),
         ("Bow", "Blue Boomerang", "Red Boomerang", "Hookshot", "Bombs", "Mushroom", "Magic Powder", "Fire Rod", "Ice Rod", "Lamp"),
         ("Bombos", "Ether", "Quake", "Hammer", "Shovel", "Ocarina", "Bug Catching Net", "Book of Mudora", "Bottle", "Magic Mirror"),
         ("Cane of Somaria", "Cane of Byrna", "Cape", "Pegasus Boots", "Power Glove", "Titans Mitts", "Flippers", "Moon Pearl", "Key Door", "Big Key Door"),
         ("Fighter Sword", "Master Sword", "Tempered Sword", "Golden Sword", "Blue Shield", "Red Shield", "Mirror Shield", "Green Mail", "Blue Mail", "Red Mail"),
+        ("Magic Upgrade (1/2)", "Magic Upgrade (1/4)"),
     )
     ENTRANCES = 4  # the most a dungeon has
 

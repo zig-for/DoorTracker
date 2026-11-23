@@ -9,6 +9,8 @@ from data.doors_sprite_data import REACHABLE
 from gui.Doors import kill_rooms
 from gui.Doors.graph_model import CheckState, DoorState
 from gui.Doors.kill_rooms import KILL_ROOMS, NA, PICKS, clearing
+from gui.Doors.logic import holds
+from gui.Doors.rules import boss_rules
 from support import At, model_leading_to, new_model
 
 # In the original game: a red mimic, which dies only to arrows, and two green ones
@@ -45,6 +47,24 @@ def test_killing_a_rooms_enemies_takes_what_the_randomizer_says_it_does():
     # Nothing in the tile room has to be killed: a seed with enemies shuffled can put something there that does
     assert original("GT Tile Room") is True
     assert clearing("GT Tile Room", ("Terrorpin", NA)) == "Hammer"
+
+
+def test_a_way_of_killing_that_takes_more_magic_than_one_bar_takes_enough_magic():
+    # Five Pengators: ten shots of the fire rod, where a bar is eight
+    rule = clearing("Ice Pengator Trap", ("Pengator",) * 5)
+    assert not holds(rule, frozenset({"Fire Rod"}))
+    assert holds(rule, frozenset({"Fire Rod", "Bottle"}))
+    assert holds(rule, frozenset({"Fire Rod", "Magic Upgrade (1/2)"}))
+    # Four take eight
+    assert holds(clearing("Ice Pengator Trap", ("Pengator",) * 4 + (NA,)), frozenset({"Fire Rod"}))
+
+
+def test_a_boss_that_takes_more_magic_than_one_bar_takes_enough_magic():
+    # With the fire rod alone: twenty shots of it
+    usual, _on_ice = boss_rules["Kholdstare"]
+    assert not holds(usual, frozenset({"Fire Rod", "Bottle"}))
+    assert holds(usual, frozenset({"Fire Rod", "Bottle", "2 Bottles"}))
+    assert holds(usual, frozenset({"Fire Rod", "Magic Upgrade (1/2)", "Magic Upgrade (1/4)"}))
 
 
 def test_a_kill_rooms_way_out_takes_killing_the_enemies_it_has():

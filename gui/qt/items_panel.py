@@ -5,11 +5,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import QAbstractButton, QGridLayout, QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget
 
-from gui.Doors.logic import BIG_KEYS, BOTTLE, FIRST_HEARTS, HEARTS, STARTING_ITEMS, hearts_held, with_hearts
+from gui.Doors.logic import BIG_KEYS, BOTTLES, FIRST_HEARTS, HEARTS, MAGIC_BARS, STARTING_ITEMS, hearts_held, with_hearts
 from gui.Doors.randomizer import FOLDER
 
 PICTURES = FOLDER / "data" / "itemgfx"  # the randomizer's own, 32 pixels high
@@ -28,6 +28,9 @@ PICTURE_NAMES = {
     "Cape": "Magic Cape",
     "Titans Mitts": "Titans Mitt",
     "Red Shield": "Fire Shield",
+    "Magic Upgrade (1/2)": "Half Magic",
+    "Magic Upgrade (1/4)": "Quarter Magic",
+    **dict.fromkeys(BOTTLES, "Bottle"),
 }
 BIG_KEY_PICTURE = "Big Key"
 
@@ -39,6 +42,7 @@ class Slot:
     items: tuple[str, ...]
     together: bool = False  # the items share it; otherwise each takes the place of the one before
     start: str | None = None  # picture of what the player has in it from the start
+    counted: bool = False  # each item is one more of the same thing: how many are held is written on it
 
 
 def one(item: str) -> Slot:
@@ -50,16 +54,18 @@ MENU = [
     [one("Bow"), Slot(("Blue Boomerang", "Red Boomerang"), together=True), one("Hookshot"), one("Bombs"), Slot(("Mushroom", "Magic Powder"), together=True)],
     [one("Fire Rod"), one("Ice Rod"), one("Bombos"), one("Ether"), one("Quake")],
     [one("Lamp"), one("Hammer"), Slot(("Shovel", "Ocarina"), together=True), one("Bug Catching Net"), one("Book of Mudora")],
-    [one(BOTTLE), one("Cane of Somaria"), one("Cane of Byrna"), one("Cape"), one("Magic Mirror")],
+    [Slot(tuple(BOTTLES), counted=True), one("Cane of Somaria"), one("Cane of Byrna"), one("Cape"), one("Magic Mirror")],
 ]
 ABILITIES = [one("Pegasus Boots"), Slot(("Power Glove", "Titans Mitts")), one("Flippers"), one("Moon Pearl")]
+UPGRADES = [Slot(tuple(MAGIC_BARS))]
 EQUIPMENT = [
     Slot(("Fighter Sword", "Master Sword", "Tempered Sword", "Golden Sword")),
     Slot(("Blue Shield", "Red Shield", "Mirror Shield")),
     Slot(("Blue Mail", "Red Mail"), start="Green Mail"),
 ]
-SLOTS = [slot for row in (*MENU, ABILITIES, EQUIPMENT) for slot in row]
-ITEMS = [item for slot in SLOTS for item in (*([slot.start] if slot.start else []), *slot.items)]
+SLOTS = [slot for row in (*MENU, ABILITIES, EQUIPMENT, UPGRADES) for slot in row]
+# A counted slot's items are one item, however many of it
+ITEMS = [item for slot in SLOTS for item in (*([slot.start] if slot.start else []), *(slot.items[:1] if slot.counted else slot.items))]
 # The tracker's name for a dungeon -> what the keys strip calls it, in the order of the tabs
 SHORT_NAMES = {
     "Hyrule_Castle": "HC",
@@ -115,8 +121,22 @@ def slot_picture(slot: Slot, held: frozenset[str]) -> QPixmap:
         item = mine[-1] if mine else slot.items[0]
         shown = picture(slot.start if slot.start and not mine else PICTURE_NAMES.get(item, item))
         painter.drawPixmap((CELL - shown.width()) // 2, 0, shown)
+        if slot.counted and len(mine) > 1:
+            write_count(painter, len(mine))
     painter.end()
     return cell if mine or slot.start else greyed(cell)
+
+
+def write_count(painter: QPainter, count: int) -> None:
+    """Write a number over the middle of a cell's picture."""
+    font = QFont()
+    font.setPixelSize(13)
+    font.setBold(True)
+    painter.setFont(font)
+    # White on a black edge, to read over the picture
+    for dx, dy, colour in ((1, 1, "black"), (-1, -1, "black"), (1, -1, "black"), (-1, 1, "black"), (0, 0, "white")):
+        painter.setPen(QColor(colour))
+        painter.drawText(QRect(dx, dy, CELL, CELL), Qt.AlignmentFlag.AlignCenter, str(count))
 
 
 def hearts_picture(count: int) -> QPixmap:
@@ -126,14 +146,7 @@ def hearts_picture(count: int) -> QPixmap:
     painter = QPainter(cell)
     heart = picture("Heart Container")
     painter.drawPixmap((CELL - heart.width()) // 2, 0, heart)
-    font = QFont()
-    font.setPixelSize(13)
-    font.setBold(True)
-    painter.setFont(font)
-    # White on a black edge, to read over the red
-    for dx, dy, colour in ((1, 1, "black"), (-1, -1, "black"), (1, -1, "black"), (-1, 1, "black"), (0, 0, "white")):
-        painter.setPen(QColor(colour))
-        painter.drawText(cell.rect().translated(dx, dy), Qt.AlignmentFlag.AlignCenter, str(count))
+    write_count(painter, count)
     painter.end()
     return cell
 
@@ -266,8 +279,8 @@ class ItemsPanel(QWidget):
         for row, slots in enumerate(MENU):
             for place, slot in enumerate(slots):
                 grid.addWidget(cell(slot), row, place)
-        # To the right of the menu's grid: a column of abilities and a column of equipment
-        for place, slots in enumerate((ABILITIES, EQUIPMENT)):
+        # To the right of the menu's grid: a column of abilities, one of equipment and one of upgrades
+        for place, slots in enumerate((ABILITIES, EQUIPMENT, UPGRADES)):
             for row, slot in enumerate(slots):
                 grid.addWidget(cell(slot), row, len(MENU[0]) + place)
         # Under the equipment: how many hearts
