@@ -13,14 +13,13 @@ sys.path.insert(0, str(ROOT))
 
 from PIL import Image, ImageOps  # noqa: E402
 
-from gui.Doors.kill_rooms import KINDS  # noqa: E402
+from gui.Doors.kill_rooms import PICKS  # noqa: E402
 
-# The randomizer's name for a kind -> the pack's name for its picture
+# What an enemy can be picked as -> the pack's name for its picture
 PICTURES = {
     "Raven": "Raven",
     "Vulture": "Vulture",
     "Octorok": "Octorok (one-way)",
-    "Octorok4Way": "Octorok (four-way)",
     "Buzzblob": "Buzzblob",
     "Snapdragon": "Snapdragon",
     "Octoballoon": "Octoballoon",
@@ -50,7 +49,6 @@ PICTURES = {
     "GreenKnifeGuard": "Green Soldier Recruit",
     "Geldman": "Geldman",
     "Popo": "Popo",
-    "Popo2": "Popo2",
     "ArmosStatue": "Armos",
     "FireballZora": "Fireball Zora",
     "Crab": "Crab",
@@ -89,6 +87,14 @@ PICTURES = {
 }
 # The pack has one picture for the two Mimics, its left half red and its right green: which half each is
 MIMIC_HALVES = {"RedMimic": "left", "GreenMimic": "right"}
+# A kind the game draws from either of two sheets of graphics -> the pack's name for how it looks on the second.
+# Its picture is the left half of the first look and the right half of this one
+SECOND_LOOKS = {
+    "Raven": "New folder/Kyune",
+    "Octorok": "New folder/Slarok",
+    "FireballZora": "New folder/Ku",
+    "Snake": "New folder/Stalrope",
+}
 
 
 def game_size(picture: Image.Image) -> Image.Image:
@@ -113,11 +119,20 @@ def whole(picture: Image.Image, half: str) -> Image.Image:
 
 def main():
     pack = Path(sys.argv[1])
-    assert set(PICTURES) == set(KINDS), set(PICTURES) ^ set(KINDS)
+
+    def read(name: str) -> Image.Image:
+        return game_size(Image.open(pack / f"{name}.png").convert("RGBA"))
+
+    assert set(PICTURES) == set(PICKS), set(PICTURES) ^ set(PICKS)
     for kind, name in PICTURES.items():
-        picture = game_size(Image.open(pack / f"{name}.png").convert("RGBA"))
+        picture = read(name)
         if kind in MIMIC_HALVES:
             picture = whole(picture, MIMIC_HALVES[kind])
+        if kind in SECOND_LOOKS:
+            second = read(SECOND_LOOKS[kind])
+            assert second.size == picture.size, kind
+            middle = picture.width // 2
+            picture.paste(second.crop((middle, 0, second.width, second.height)), (middle, 0))
         picture.save(ROOT / "data" / "enemies" / f"{kind}.png")
 
 

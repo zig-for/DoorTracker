@@ -261,7 +261,7 @@ class Assets:
         return self._bosses[name]
 
     def enemy(self, kind: str) -> QPixmap:
-        """The picture of a kind of enemy, one of kill_rooms.KINDS."""
+        """The picture of a kind of enemy, one of kill_rooms.PICKS."""
         if kind not in self._enemies:
             self._enemies[kind] = QPixmap(str(kill_rooms.PICTURES / f"{kind}.png"))
         return self._enemies[kind]

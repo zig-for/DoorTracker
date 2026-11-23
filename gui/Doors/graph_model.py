@@ -235,7 +235,8 @@ class GraphModel:
         self.special_doors: dict[str, str] = {}  # door -> icon
         self.bosses: dict[Tile, str] = {}  # boss room -> its boss, as the player picked it or as the seed has it
         self.bosses_revealed: set[Tile] = set()  # the boss rooms that have had the seed's own boss: see reveal_bosses
-        self.enemies: dict[tuple[str, int], str] = {}  # (kill room, enemy's number) -> its kind, where the player picked it
+        # (kill room, enemy's number) -> the kind the player picked for it: one of kill_rooms.PICKS, or NA
+        self.enemies: dict[tuple[str, int], str] = {}
         self.revealed = False  # the map is the seed's own, put here by show_seed
         self.kept_expanded: set[Node] = set()  # see toggle_expanded
         self.sanc_dungeon = False
@@ -1719,7 +1720,8 @@ class GraphModel:
         return spots
 
     def set_enemy(self, room: str, number: int, kind: str | None) -> None:
-        """Say which kind one of a kill room's enemies is. None for the original game's."""
+        """Say which kind one of a kill room's enemies is: one of kill_rooms.PICKS, or NA. None for the original
+        game's."""
         if kind is None:
             self.enemies.pop((room, number), None)
         else:

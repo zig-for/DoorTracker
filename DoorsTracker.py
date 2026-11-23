@@ -39,7 +39,7 @@ from gui import files
 from gui.Doors import link_sprite, rooms, seed_map
 from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import DROPS, Drop, checks
-from gui.Doors.kill_rooms import KINDS, NA
+from gui.Doors.kill_rooms import NA, PICKS
 from gui.Doors.layout import REPEL_RANGE
 from gui.Doors.logic import COMPASSES, MAPS, STARTING_ITEMS, items_held, small_keys
 from gui.qt.graph_page import Assets, GraphPage
@@ -250,11 +250,10 @@ class EnemyPicker(Picker):
         super().__init__(parent, "Enemy")
         grid = QGridLayout(self)
         grid.setSpacing(2)
-        for place, kind in enumerate([*KINDS, NA]):
+        for place, kind in enumerate([*PICKS, NA]):
             button = QToolButton()
             if kind == NA:
                 button.setText(NA)
-                button.setToolTip("Anything else: it does not have to be killed")
             else:
                 side = self.SIDE - 8
                 button.setIcon(QIcon(assets.enemy(kind).scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))

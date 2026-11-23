@@ -8,7 +8,7 @@ import DoorsTracker
 from data.doors_sprite_data import REACHABLE
 from gui.Doors import kill_rooms
 from gui.Doors.graph_model import CheckState, DoorState
-from gui.Doors.kill_rooms import KILL_ROOMS, KINDS, NA, clearing
+from gui.Doors.kill_rooms import KILL_ROOMS, NA, PICKS, clearing
 from support import At, model_leading_to, new_model
 
 # In the original game: a red mimic, which dies only to arrows, and two green ones
@@ -24,8 +24,14 @@ def mimic_room(way_in):
     return model
 
 
-def test_every_kind_of_enemy_has_a_picture():
-    assert {file.stem for file in kill_rooms.PICTURES.glob("*.png")} == set(KINDS)
+def test_everything_an_enemy_can_be_picked_as_has_a_picture():
+    assert {file.stem for file in kill_rooms.PICTURES.glob("*.png")} == set(PICKS)
+
+
+def test_a_kind_left_out_as_the_twin_of_another_takes_the_same_to_kill():
+    room = "Ice Jelly Key"  # three enemies
+    for twin, kind in kill_rooms.TWINS.items():
+        assert clearing(room, (twin,) * 3) == clearing(room, (kind,) * 3)
 
 
 def test_the_one_kind_is_drawn_as_a_mimic_in_a_mimic_room_and_as_an_eyegore_elsewhere():
@@ -124,7 +130,7 @@ def test_an_enemy_is_named_on_hover_and_its_kind_picked_by_clicking(window, app,
 def test_the_enemy_picker_has_every_kind_and_na(window):
     picker = DoorsTracker.EnemyPicker(window, window.assets)
     buttons = {button.objectName(): button for button in picker.findChildren(QToolButton)}
-    assert set(buttons) == {*KINDS, NA}
-    assert not [kind for kind in KINDS if buttons[kind].icon().isNull()]
+    assert set(buttons) == {*PICKS, NA}
+    assert not [pick for pick in PICKS if buttons[pick].icon().isNull()]
     buttons["Stalfos"].click()
     assert picker.choice == "Stalfos"

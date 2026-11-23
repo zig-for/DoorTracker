@@ -28,7 +28,9 @@ from ALttPDoorRandomizer.source.enemizer.SpriteSheets import init_sprite_require
 from ALttPDoorRandomizer.source.logic.Rule import RuleType  # noqa: E402
 from ALttPDoorRandomizer.source.rom.DataTables import get_uw_enemy_table  # noqa: E402
 
-PICTURES = Path(__file__).parent.parent.parent / "data" / "enemies"  # one for each of KINDS, by its name
+# One for each of PICKS, by its name. The game draws some kinds from either of two sheets of graphics, whichever
+# the room has, and they look different on each: the picture of one of those is half of each look
+PICTURES = Path(__file__).parent.parent.parent / "data" / "enemies"
 # In place of a kind: anything that need not be killed, like a Beamos
 NA = "N/A"
 
@@ -52,6 +54,10 @@ def _kinds() -> list[str]:
 
 
 KINDS = _kinds()
+# A kind that looks the same as another and takes the same to kill -> the other, which is the one to pick
+TWINS = {"Octorok4Way": "Octorok", "Popo2": "Popo"}
+# What an enemy can be picked as
+PICKS = [kind for kind in KINDS if kind not in TWINS]
 
 
 @dataclass(frozen=True)
@@ -99,7 +105,7 @@ def _rooms() -> dict[str, KillRoom]:
             # One that neither counts nor can be changed never has to be killed: a statue that shoots
             if sprite.sub_type != SpriteType.Overlord and (counts or _shuffled(sprite)):
                 original = sprite.kind.name if counts else NA
-                picture = MIMICS.get(original, original) if room in MIMIC_ROOMS else original
+                picture = MIMICS.get(original, original) if room in MIMIC_ROOMS else TWINS.get(original, original)
                 enemies.append(Enemy(number, sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8, original, picture))
         # Not the caves, and not a room with none: it is listed for a seed with enemies' health shuffled
         if tile in SUPERTILES and enemies:
