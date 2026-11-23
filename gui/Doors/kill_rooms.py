@@ -14,14 +14,15 @@ from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
 
-from gui.Doors.checks import checks
+from gui.Doors.checks import checks, sprite_place
 from gui.Doors.logic import READABLE, Rule, combine, enough_magic
-from gui.Doors.rooms import SUPERTILES, Tile
+from gui.Doors.rooms import SUPERTILES, Tile, tile_of
 
 # After gui.Doors.rooms, which goes by gui.Doors.randomizer: that makes these importable
 from ALttPDoorRandomizer.Items import item_table  # noqa: E402
 from ALttPDoorRandomizer.Rules import kill_chests, std_kill_rooms  # noqa: E402
 from ALttPDoorRandomizer.source.dungeon.EnemyList import EnemySprite, SpriteType, init_enemy_stats  # noqa: E402
+from ALttPDoorRandomizer.source.dungeon.RoomConstants import GT_MimicsRooms, PoD_Mimics_MovingWallRoom, PoD_Warps_SouthMimicsRoom  # noqa: E402
 from ALttPDoorRandomizer.source.enemizer import EnemyLogic  # noqa: E402
 from ALttPDoorRandomizer.source.enemizer.DamageTables import DamageTable  # noqa: E402
 from ALttPDoorRandomizer.source.enemizer.SpriteSheets import init_sprite_requirements  # noqa: E402
@@ -33,33 +34,33 @@ from ALttPDoorRandomizer.source.rom.DataTables import get_uw_enemy_table  # noqa
 PICTURES = Path(__file__).parent.parent.parent / "data" / "enemies"
 # In place of a kind: anything that need not be killed, like a Beamos
 NA = "N/A"
-# In place of a kind: not seen yet, in a seed with enemies shuffled
-UNKNOWN = "?"
+# A kind that looks the same as another and takes the same to kill -> the other, which is the one to pick
+TWINS = {"Octorok4Way": "Octorok", "Popo2": "Popo"}
+# The game has one kind for an Eyegore and a mimic, and draws it as a mimic in the rooms it has mimics in, which
+# the randomizer names. The randomizer has a mimic as a kind of its own as well, for enemy shuffle to place
+MIMIC_ROOMS = {PoD_Mimics_MovingWallRoom, PoD_Warps_SouthMimicsRoom, GT_MimicsRooms}
+MIMICS = {"GreenEyegoreMimic": "GreenMimic", "RedEyegoreMimic": "RedMimic"}
 
 _STATS = init_enemy_stats()
 _SPRITES = get_uw_enemy_table().room_map
 _REQUIREMENTS = init_sprite_requirements()
 
 
-def _kinds() -> list[str]:
-    """The kinds of enemy that enemy shuffle can put in a kill room and that have to be killed there, by the
-    randomizer's names for them, in the game's order."""
+def _picks() -> list[str]:
+    """What an enemy can be picked as: the kinds that enemy shuffle can put in a kill room and that have to be
+    killed there, by the randomizer's names for them, in the game's order."""
     found = set()
     for requirement in _REQUIREMENTS.values():
         # A dict is a kind that differs by room, which is not an enemy: the shopkeeper
         if isinstance(requirement, dict) or requirement.overlord or not requirement.good_for_shutter(set()):
             continue
         stats = _STATS.get(requirement.sprite)
-        if stats is not None and not stats.ignore_for_kill_room:
+        if stats is not None and not stats.ignore_for_kill_room and requirement.sprite.name not in TWINS:
             found.add(requirement.sprite)
     return [kind.name for kind in sorted(found, key=lambda kind: kind.value)]
 
 
-KINDS = _kinds()
-# A kind that looks the same as another and takes the same to kill -> the other, which is the one to pick
-TWINS = {"Octorok4Way": "Octorok", "Popo2": "Popo"}
-# What an enemy can be picked as
-PICKS = [kind for kind in KINDS if kind not in TWINS]
+PICKS = _picks()
 
 
 @dataclass(frozen=True)
@@ -71,19 +72,22 @@ class Enemy:
     picture: str  # the kind whose picture shows it there
 
 
-# The game has one kind for an Eyegore and a mimic, and draws it as a mimic in the rooms it has mimics in: those
-# with these numbers. The randomizer names a mimic as a kind of its own, for enemy shuffle to place
-MIMIC_ROOMS = {0x1B, 0x4B, 0x6B}
-MIMICS = {"GreenEyegoreMimic": "GreenMimic", "RedEyegoreMimic": "RedMimic"}
-
-
 @dataclass(frozen=True)
 class KillRoom:
-    tile: Tile
+    room: int  # the game's number for the room it is in
     enemies: tuple[Enemy, ...]  # the ones a seed can have to be killed
     ways: tuple[str, ...] = ()  # the doors out of it that take killing them
     trap_ways: tuple[str, ...] = ()  # and those that take it only in a seed that has made them trap doors
     checks: tuple[str, ...] = ()  # the checks that take it
+
+    @property
+    def tile(self) -> Tile:
+        return tile_of(self.room)
+
+    @property
+    def middle(self) -> tuple[float, float]:
+        """The middle of where its enemies stand, in the supertile, 0..512."""
+        return sum(enemy.x for enemy in self.enemies) / len(self.enemies), sum(enemy.y for enemy in self.enemies) / len(self.enemies)
 
 
 def _shuffled(sprite) -> bool:
@@ -99,7 +103,6 @@ def _rooms() -> dict[str, KillRoom]:
     listed |= {name: (room, numbers, {"checks": tuple(names)}) for name, (names, room, numbers) in kill_chests.items()}
     found = {}
     for name, (room, numbers, opens) in listed.items():
-        tile = (room % 16, room // 16)
         enemies = []
         for number in numbers:
             sprite = _SPRITES[room][number]
@@ -108,11 +111,11 @@ def _rooms() -> dict[str, KillRoom]:
             if sprite.sub_type != SpriteType.Overlord and (counts or _shuffled(sprite)):
                 original = sprite.kind.name if counts else NA
                 picture = MIMICS.get(original, original) if room in MIMIC_ROOMS else TWINS.get(original, original)
-                enemies.append(Enemy(number, sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8, original, picture))
+                enemies.append(Enemy(number, *sprite_place(sprite), original, picture))
         # Not the caves, and not a room with none: it is listed for a seed with enemies' health shuffled
-        if tile in SUPERTILES and enemies:
+        if tile_of(room) in SUPERTILES and enemies:
             assert all(check in checks for check in opens.get("checks", ())), name
-            found[name] = KillRoom(tile, tuple(enemies), **opens)
+            found[name] = KillRoom(room, tuple(enemies), **opens)
     return found
 
 
@@ -189,24 +192,30 @@ def clearing(name: str, kinds: tuple[str, ...]) -> Rule:
     Where the randomizer finds several ways as good as each other it picks one at random, which a seed does not
     record: any of them is taken as enough.
     """
-    column, row = KILL_ROOMS[name].tile
+    room = KILL_ROOMS[name]
     pairs = []
-    for enemy, kind in zip(KILL_ROOMS[name].enemies, kinds, strict=True):
+    for enemy, kind in zip(room.enemies, kinds, strict=True):
         if kind != NA:
             # As enemy shuffle leaves it: where it was, with another kind
-            sprite = _SPRITES[row * 16 + column][enemy.number].copy()
+            sprite = _SPRITES[room.room][enemy.number].copy()
             sprite.kind = EnemySprite[kind]
             pairs.append((sprite, _REGION))
     if not pairs:
         return True
     found = []
     paths: list[tuple[int, ...]] = [()]
-    while paths:
-        path = paths.pop()
-        choices = _Choices(path)
-        setattr(EnemyLogic, "random", choices)
-        found.append(_rule(EnemyLogic.defeat_rule_multiple(_WORLD, 1, pairs)))
-        # Every other choice it could have made after the ones it was told to
-        for at in range(len(path), len(choices.sizes)):
-            paths += [(*path, *[0] * (at - len(path)), other) for other in range(1, choices.sizes[at])]
+    # The randomizer's module makes its choices by its own random numbers: ours stand in for them for as long as
+    # this takes
+    its_own = EnemyLogic.random
+    try:
+        while paths:
+            path = paths.pop()
+            choices = _Choices(path)
+            setattr(EnemyLogic, "random", choices)
+            found.append(_rule(EnemyLogic.defeat_rule_multiple(_WORLD, 1, pairs)))
+            # Every other choice it could have made after the ones it was told to
+            for at in range(len(path), len(choices.sizes)):
+                paths += [(*path, *[0] * (at - len(path)), other) for other in range(1, choices.sizes[at])]
+    finally:
+        setattr(EnemyLogic, "random", its_own)
     return combine("any", found)

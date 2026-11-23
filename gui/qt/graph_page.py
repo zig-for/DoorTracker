@@ -302,7 +302,7 @@ class RoomItem(QGraphicsItem):
         self.outline = self._around(self.pieces, 0)
         self.player_outline = self._around(self.pieces, 3)
         self.w, self.h = self.box[2] - self.box[0], self.box[3] - self.box[1]
-        self.blank_dead = bool(model.experimental_flags.get("trim_rooms"))
+        self.blank_dead = bool(model.settings.get("trim_rooms"))
         self.colour = QColor(dungeon_colour(supertile(node.tile).dungeon))
         self.hidden = model.is_hidden_dark(node.tile)
         self.compact = node in model.compact
@@ -522,6 +522,8 @@ class DoorsItem(QGraphicsItem):
         self.node = node
         # Door positions are relative to the full supertile, not the drawn pieces
         self.w, self.h = (page.model.size(node) if node in page.model.compact else (THUMB, THUMB))
+        # What is on the node whatever the player holds. What goes by the items held is asked at each drawing,
+        # as they change without the map being rebuilt: the colours, and which enemies are shown
         self.dots = page.model.door_dots(node)
         self.checks = page.model.check_spots(node) if page.top.settings["show_checks"] else []
         self.bosses = page.model.boss_spots(node)
@@ -625,10 +627,10 @@ class DoorsItem(QGraphicsItem):
             painter.setPen(QPen(QColor(OUTLINE if clear else BLOCKED), 1))
             painter.setBrush(QColor(ENEMY_PLATE_NA if enemy.kind == kill_rooms.NA else ENEMY_PLATE if clear else ENEMY_PLATE_BLOCKED))
             painter.drawRect(QRectF(enemy.x - half, enemy.y - half, ENEMY_SIZE, ENEMY_SIZE))
-            if enemy.kind != kill_rooms.NA:
-                # As big as fits inside the plate's edge, in the picture's own shape. A question mark until picked
-                shown = page.assets.icon(REACHABLE) if enemy.kind == kill_rooms.UNKNOWN else page.assets.enemy(enemy.picture)
-                assert shown is not None
+            # Its picture, or a question mark until it is picked. Nothing for one that need not be killed
+            shown = page.assets.enemy(enemy.picture) if enemy.picture else page.assets.icon(REACHABLE) if enemy.kind is None else None
+            if shown is not None:
+                # As big as fits inside the plate's edge, in the picture's own shape
                 scale = (ENEMY_SIZE - 2 * ENEMY_EDGE) / max(shown.width(), shown.height())
                 wide, tall = shown.width() * scale, shown.height() * scale
                 draw_pixel_art(painter, QRectF(enemy.x - wide / 2, enemy.y - tall / 2, wide, tall), shown)
@@ -1402,18 +1404,23 @@ class GraphPage(QWidget):
                 self.model.set_boss(press.hit.boss, boss)
                 self.rebuild()
         elif press.hit.enemy is not None:
-            # In a seed with enemies shuffled, a click picks the enemy's kind and a right click takes that back;
-            # see _context
-            kind = self.top.pick_enemy() if self.model.enemy_shuffle else None
-            if kind:
-                self.model.set_enemy(*press.hit.enemy, kind)
-                self.rebuild()
+            self._enemy_clicked(press.hit.enemy, undo=False)
         elif press.hit.icon is not None and entrance_only(press.hit.icon):
             # A drop or the mirror route: the player can use it
             self.model.set_entrance_used(press.hit.icon, True)
             self.rebuild()
         elif press.hit == Hit() and self.selected_door:
             self.cancel_selection()
+
+    def _enemy_clicked(self, enemy: tuple[str, int], undo: bool) -> None:
+        """In a seed with enemies shuffled, a click on one of a kill room's enemies picks its kind, and a right
+        click takes that back. In any other seed its kind is the original game's."""
+        if not self.model.enemy_shuffle:
+            return
+        kind = None if undo else self.top.pick_enemy()
+        if undo or kind:
+            self.model.set_enemy(*enemy, kind)
+            self.rebuild()
 
     def on_double_click(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
@@ -1523,7 +1530,7 @@ class GraphPage(QWidget):
                 text = f"Boss: {model.bosses.get(hit.boss, '?   (click to pick)')}"
             elif hit.enemy is not None:
                 (kind,) = [enemy.kind for enemy in self._doors[node].enemies if (enemy.room, enemy.number) == hit.enemy]
-                text = f"{hit.enemy[0]}: {kind}"
+                text = f"{hit.enemy[0]}: {kind or '?'}"
             elif hit.count is not None:
                 # What the count is counting, by name
                 (left,) = [left for kind, _box, left in self._doors[node].counts() if kind == hit.count]
@@ -1584,9 +1591,7 @@ class GraphPage(QWidget):
             model.set_boss(hit.boss, None)
             self.rebuild()
         elif hit.enemy is not None:
-            if model.enemy_shuffle:
-                model.set_enemy(*hit.enemy, None)
-                self.rebuild()
+            self._enemy_clicked(hit.enemy, undo=True)
         elif hit.icon is not None and entrance_only(hit.icon):
             model.set_entrance_used(hit.icon, False)
             self.rebuild()

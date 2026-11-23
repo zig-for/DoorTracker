@@ -1,6 +1,6 @@
 """Generate data/enemies: a picture at game size of each kind of enemy a kill room can hold, from the pictures of
 StripesOO7's ALttP PopTracker pack, https://github.com/StripesOO7/alttp-ap-poptracker-pack (as of its commit
-5f57a21).
+5f57a21), which are Zelda Wiki's.
 
     uv run tools/make_enemies.py <the pack's images/Enemies folder>
 """

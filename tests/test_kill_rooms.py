@@ -130,7 +130,7 @@ def test_with_enemies_shuffled_a_kill_room_takes_killing_the_enemies_picked_for_
     model.set_enemy(ROOM, RED, "Stalfos")
     assert model.door_state(way) is DoorState.OPEN
     # What was picked is for a seed with enemies shuffled
-    model.experimental_flags["enemy_shuffle"] = False
+    model.settings["enemy_shuffle"] = False
     model.update()
     assert model.door_state(way) is DoorState.BLOCKED
 

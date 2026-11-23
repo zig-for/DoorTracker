@@ -133,7 +133,7 @@ CREDITS = (
     "<p>Logic from aerinon's <a href='https://github.com/aerinon/ALttPDoorRandomizer'>ALttP Door Randomizer</a> "
     "(<a href='https://github.com/aurabot24/ALttPDoorRandomizer'>aurabot24's fork</a>).</p>"
     "<p>Auto-tracking is through <a href='https://github.com/alttpo/sni'>SNI</a>.</p>"
-    "<p>Enemy pictures from StripesOO7's "
+    "<p>Enemy pictures from <a href='https://zeldawiki.wiki'>Zelda Wiki</a>, by way of StripesOO7's "
     "<a href='https://github.com/StripesOO7/alttp-ap-poptracker-pack'>ALttP PopTracker pack</a>.</p>"
     "<p>The pictures from The Legend of Zelda: A Link to the Past are copyright Nintendo.</p>"
 )
@@ -168,10 +168,36 @@ class Picker(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.choice = None
+        self.grid = QGridLayout(self)
+        self.grid.setSpacing(2)
 
     def _pick(self):
         self.choice = self.sender().objectName()
         self.accept()
+
+    def _button(self, name: str, picture: QPixmap | None, side: int, taken: bool = False) -> QToolButton:
+        """A button that picks this name: with its picture, enlarged to this many pixels across with hard edges,
+        or with its name where it has none. taken: it cannot be picked, and is greyed out."""
+        button = QToolButton()
+        if picture is None:
+            button.setText(name)
+        else:
+            picture = picture.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+            icon = QIcon(picture)
+            if taken:
+                # Dark, where Qt's own greying of a button that cannot be pressed is pale
+                painter = QPainter(picture)
+                painter.fillRect(picture.rect(), QColor(0, 0, 0, 190))
+                painter.end()
+                icon.addPixmap(picture, QIcon.Mode.Disabled)
+            button.setIcon(icon)
+            button.setIconSize(QSize(side, side))
+            button.setToolTip(name.replace("_", " "))
+        button.setEnabled(not taken)
+        # Signals go to methods, never lambdas: Qt keeps a lambda that holds a widget alive, and the widget with it
+        button.setObjectName(name)
+        button.clicked.connect(self._pick)
+        return button
 
 
 class IconPicker(Picker):
@@ -189,83 +215,47 @@ class IconPicker(Picker):
         ("Magic Upgrade (1/2)", "Magic Upgrade (1/4)"),
     )
     ENTRANCES = 4  # the most a dungeon has
+    SIDE = 32
 
     def __init__(self, parent, assets, world, taken):
         """taken: the entrances the map already has, which are greyed out."""
         super().__init__(parent, "Annotate door")
-        grid = QGridLayout(self)
-        grid.setSpacing(2)
         for row, names in enumerate(self.ROWS):
             for column, name in enumerate(names):
-                grid.addWidget(self._button(name, assets, False), row, column)
-        grid.setRowMinimumHeight(len(self.ROWS), 8)  # a gap above the ways in
+                self.grid.addWidget(self._button(name, assets.icon(name), self.SIDE), row, column)
+        self.grid.setRowMinimumHeight(len(self.ROWS), 8)  # a gap above the ways in
+        ways_in = len(self.ROWS) + 1
         for column, name in enumerate(sprites.dungeon_lobbies[world]):
-            grid.addWidget(self._button(name, assets, name in taken), len(self.ROWS) + 1, column)
-        grid.addWidget(self._button(sprites.REACHABLE, assets, False), len(self.ROWS) + 1, self.ENTRANCES)
-        grid.addWidget(self._button(sprites.CHICKEN, assets, False), len(self.ROWS) + 1, len(self.ROWS[0]) - 1)
-
-    def _button(self, name, assets, taken):
-        button = QToolButton()
-        picture = assets.icon(name).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
-        icon = QIcon(picture)
-        if taken:
-            # Dark, where Qt's own greying of a button that cannot be pressed is pale
-            painter = QPainter(picture)
-            painter.fillRect(picture.rect(), QColor(0, 0, 0, 190))
-            painter.end()
-            icon.addPixmap(picture, QIcon.Mode.Disabled)
-        button.setIcon(icon)
-        button.setIconSize(QSize(32, 32))
-        button.setToolTip(name.replace("_", " "))
-        button.setEnabled(not taken)
-        # Signals go to methods, never lambdas: Qt keeps a lambda that holds a widget alive, and the widget with it
-        button.setObjectName(name)
-        button.clicked.connect(self._pick)
-        return button
+            self.grid.addWidget(self._button(name, assets.icon(name), self.SIDE, name in taken), ways_in, column)
+        self.grid.addWidget(self._button(sprites.REACHABLE, assets.icon(sprites.REACHABLE), self.SIDE), ways_in, self.ENTRANCES)
+        self.grid.addWidget(self._button(sprites.CHICKEN, assets.icon(sprites.CHICKEN), self.SIDE), ways_in, len(self.ROWS[0]) - 1)
 
 
 class BossPicker(Picker):
     """The bosses a boss room can have, to pick the one it has."""
 
     ACROSS = 5
+    SIDE = 64
 
     def __init__(self, parent, assets):
         super().__init__(parent, "Boss")
-        grid = QGridLayout(self)
-        grid.setSpacing(2)
         for place, boss in enumerate(BOSSES):
-            button = QToolButton()
-            button.setIcon(QIcon(assets.boss(boss).scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))
-            button.setIconSize(QSize(64, 64))
-            button.setToolTip(boss)
-            button.setObjectName(boss)
-            button.clicked.connect(self._pick)
-            grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
+            self.grid.addWidget(self._button(boss, assets.boss(boss), self.SIDE), place // self.ACROSS, place % self.ACROSS)
 
 
 class EnemyPicker(Picker):
     """The kinds one of a kill room's enemies can be, to pick the one it is."""
 
     ACROSS = 10
-    SIDE = 48
+    SIDE = 40
 
     def __init__(self, parent, assets):
         super().__init__(parent, "Enemy")
-        grid = QGridLayout(self)
-        grid.setSpacing(2)
         for place, kind in enumerate([*PICKS, NA]):
-            button = QToolButton()
-            if kind == NA:
-                button.setText(NA)
-            else:
-                side = self.SIDE - 8
-                button.setIcon(QIcon(assets.enemy(kind).scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))
-                button.setIconSize(QSize(side, side))
-                button.setToolTip(kind)
-            button.setFixedSize(self.SIDE, self.SIDE)
-            button.setObjectName(kind)
-            button.clicked.connect(self._pick)
-            grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
+            button = self._button(kind, None if kind == NA else assets.enemy(kind), self.SIDE)
+            # All one size, the one with no picture too
+            button.setFixedSize(self.SIDE + 8, self.SIDE + 8)
+            self.grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
 
 
 class EgPicker(QDialog):

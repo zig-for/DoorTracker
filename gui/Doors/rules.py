@@ -94,13 +94,18 @@ class Reader:
         if name == "Reach" and len(node.args) == 3 and text(node.args[1]) == "Region":
             region = text(node.args[0])
             return ("reached", region) if region in self.regions else True
-        # Enough magic: Primitive("can_extend_magic", player, how much) or state.can_extend_magic(player, how much),
-        # where no number is 16. One that is not written out as a number is not known, so met
-        if (text(node.args[0]) if name == "Primitive" and node.args else name) == "can_extend_magic":
-            amounts = node.args[2:3] if name == "Primitive" else node.args[1:2]
+        # Enough magic, asked for in two ways, each with how much after the player. Where no amount is given it
+        # is 16, and one that is not written out as a number is not known, so met
+        amounts = None
+        if name == "Primitive" and text(node.args[0]) == "can_extend_magic":
+            amounts = node.args[2:3]
+        elif name == "can_extend_magic":
+            amounts = node.args[1:2]
+        if amounts is not None:
             if not amounts:
                 return enough_magic(16)
-            return enough_magic(amounts[0].value) if isinstance(amounts[0], ast.Constant) and isinstance(amounts[0].value, int) else True
+            amount = amounts[0]
+            return enough_magic(amount.value) if isinstance(amount, ast.Constant) and isinstance(amount.value, int) else True
         if name == "Primitive" and len(node.args) == 2:
             return self.test(str(text(node.args[0])))
         if name == "Primitive" and text(node.args[0]) == "has_hearts" and len(node.args) == 3:

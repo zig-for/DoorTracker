@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from typing import NamedTuple, TypedDict
 
 from data.new_location_data import underworld_items
-from gui.Doors.rooms import SUPERTILES
+from gui.Doors.rooms import SUPERTILES, room_of, tile_of
 
 # After gui.Doors.rooms, which goes by gui.Doors.randomizer: that makes these importable
 from ALttPDoorRandomizer import PotShuffle  # noqa: E402
@@ -45,6 +45,11 @@ def pot_place(pot) -> tuple[int, int]:
     return (pot.x & 0x7F) * 4 + 8, (pot.y * 2 + (pot.x >> 7)) * 8 + 8
 
 
+def sprite_place(sprite) -> tuple[int, int]:
+    """Where one of the randomizer's sprites stands in its supertile, 0..512: the middle of its tile."""
+    return sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8
+
+
 def key_drops() -> dict[str, Check]:
     """The keys in pots and dropped by enemies: where the randomizer has the pot or enemy, and the bit it sets,
     worked out as the randomizer's client does."""
@@ -62,11 +67,11 @@ def key_drops() -> dict[str, Check]:
             # An enemy: (address, room, its place in the room's list)
             assert isinstance(where, tuple)
             _, room, index = where
-            x, y = enemies[room][index].tile_x * 16 + 8, enemies[room][index].tile_y * 16 + 8
+            x, y = sprite_place(enemies[room][index])
             # Overlords are in the enemy list but have no bit
             index -= sum(1 for sprite in enemies[room][:index] if sprite.sub_type == 0x07)
             flag = ("enemy", room, 0x8000 >> index)
-        found[name] = {"tile": (room % 16, room // 16), "x": x, "y": y, "flags": [flag]}
+        found[name] = {"tile": tile_of(room), "x": x, "y": y, "flags": [flag]}
     return found
 
 
@@ -90,7 +95,7 @@ def drops() -> dict[tuple[int, int], list[Drop]]:
     found: dict[tuple[int, int], list[Drop]] = {}
 
     def add(name: str, kind: str, room: int, place: int, x: int, y: int, what: str) -> None:
-        tile = (room % 16, room // 16)
+        tile = tile_of(room)
         if tile in SUPERTILES:
             found.setdefault(tile, []).append(Drop(name, kind, room, 0x8000 >> place, x, y, what))
 
@@ -110,7 +115,7 @@ def drops() -> dict[tuple[int, int], list[Drop]]:
             if sprite.sub_type != SpriteType.Overlord:
                 if valid_drop_location(sprite, index, seed, 1):
                     name = f"{sprite.region} Enemy #{index + 1}"
-                    add(name, "enemy", room, place, sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8, enemy_names[sprite.kind])
+                    add(name, "enemy", room, place, *sprite_place(sprite), enemy_names[sprite.kind])
                 place += 1
     return found
 
@@ -124,7 +129,7 @@ def read() -> dict[str, Check]:
         if name in in_rooms:
             check["flags"].append(("room", *in_rooms[name]))
     for tile, spots in sorted(underworld_items.items()):
-        room = tile[1] * 16 + tile[0]
+        room = room_of(tile)
         for name, spot in spots.items():
             if spot["loc_type"] not in KINDS:
                 continue
