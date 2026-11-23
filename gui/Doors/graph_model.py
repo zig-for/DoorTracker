@@ -150,7 +150,8 @@ class BossSpot:
 class EnemySpot:
     room: str  # the kill room, in gui/Doors/kill_rooms.py
     number: int  # the enemy's place in the room's list of sprites
-    kind: str  # as the player picked it: one of kill_rooms.PICKS, or NA. UNKNOWN until then
+    kind: str  # its kind, or NA. In a seed with enemies shuffled, as the player picked it, and UNKNOWN until then
+    picture: str  # the kind whose picture shows it
     x: float  # relative to the node's centre, world units
     y: float
 
@@ -1726,10 +1727,11 @@ class GraphModel:
         return self._unkilled[room]
 
     def enemy_spots(self, node: Node) -> list[EnemySpot]:
-        """The enemies drawn on a node, for each kill room on it, in a seed with enemies shuffled. None on a pill,
-        or on a dark room not yet seen lit. A room's are in rows, centred where its enemies stand and kept inside
-        the supertile."""
-        if not self.enemy_shuffle or node in self.compact or self.is_hidden_dark(node.tile):
+        """The enemies drawn on a node, for each kill room on it. In a seed with enemies shuffled, every one, as
+        the player picked it; in any other, the original game's that the player's items do not kill. None on a
+        pill, or on a dark room not yet seen lit. A room's are in rows, centred where its enemies stand and kept
+        inside the supertile."""
+        if node in self.compact or self.is_hidden_dark(node.tile):
             return []
         split = self.rooms.part_count(node.tile) > 1
         spots = []
@@ -1739,16 +1741,20 @@ class GraphModel:
             y = sum(enemy.y for enemy in enemies) / len(enemies)
             if split and self.player_node(node.tile, x, y) != node:
                 continue
-            across = min(len(enemies), ENEMIES_ACROSS)
-            down = -(-len(enemies) // ENEMIES_ACROSS)
+            if self.enemy_shuffle:
+                picked = [self.enemies.get((name, enemy.number), UNKNOWN) for enemy in enemies]
+                shown = [(enemy.number, kind, kind) for enemy, kind in zip(enemies, picked)]
+            else:
+                shown = [(enemy.number, enemy.original, enemy.picture) for enemy in enemies if enemy.number in self._unkilled[name]]
+            across = min(len(shown), ENEMIES_ACROSS)
+            down = -(-len(shown) // ENEMIES_ACROSS)
             wide, tall = across * ENEMY_SIZE, down * ENEMY_SIZE
             edge = THUMB / 2 - 2
             left = min(max((x / 512 - 0.5) * THUMB - wide / 2, -edge), edge - wide)
             top = min(max((y / 512 - 0.5) * THUMB - tall / 2, -edge), edge - tall)
-            for place, enemy in enumerate(enemies):
+            for place, (number, kind, picture) in enumerate(shown):
                 column, row = place % ENEMIES_ACROSS, place // ENEMIES_ACROSS
-                kind = self.enemies.get((name, enemy.number), UNKNOWN)
-                spots.append(EnemySpot(name, enemy.number, kind, left + (column + 0.5) * ENEMY_SIZE, top + (row + 0.5) * ENEMY_SIZE))
+                spots.append(EnemySpot(name, number, kind, picture, left + (column + 0.5) * ENEMY_SIZE, top + (row + 0.5) * ENEMY_SIZE))
         return spots
 
     def set_enemy(self, room: str, number: int, kind: str | None) -> None:

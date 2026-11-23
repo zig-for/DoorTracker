@@ -135,8 +135,6 @@ def test_an_enemy_is_named_on_hover_and_its_kind_picked_by_clicking(window, app,
     window.select_dungeon("Palace_of_Darkness")
     page = window.pages["Palace_of_Darkness"]
     page.model.add_tile(KILL_ROOMS[ROOM].tile, has_been_lit=True)
-    # Enemies are only drawn for a seed with them shuffled
-    assert not [spot for node in page.model.nodes() for spot in page.model.enemy_spots(node)]
     window.set_option("enemy_shuffle", True)
     page.fit_view()
     app.processEvents()
@@ -156,6 +154,53 @@ def test_an_enemy_is_named_on_hover_and_its_kind_picked_by_clicking(window, app,
     assert page.status.text() == f"{ROOM}: {NA}"
     QTest.mouseClick(viewport, Qt.MouseButton.RightButton, pos=on_it)
     assert page.model.enemies == {}
+
+    # In any other seed the enemy there is the original game's, which no click changes
+    page.model.set_enemy(ROOM, RED, "Stalfos")
+    window.set_option("enemy_shuffle", False)
+    page.set_hover(page.hit_at(At(on_it)))
+    assert page.status.text() == f"{ROOM}: RedEyegoreMimic"
+    asked = []
+    monkeypatch.setattr(window, "pick_enemy", lambda: asked.append(True))
+    QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, pos=on_it)
+    QTest.mouseClick(viewport, Qt.MouseButton.RightButton, pos=on_it)
+    assert not asked and page.model.enemies == {(ROOM, RED): "Stalfos"}
+
+
+def test_without_enemies_shuffled_the_original_enemies_that_cannot_be_killed_are_drawn():
+    model = new_model("Palace_of_Darkness")
+    model.add_tile(KILL_ROOMS[ROOM].tile, has_been_lit=True)
+
+    def drawn():
+        return [(spot.kind, spot.picture) for node in model.nodes() for spot in model.enemy_spots(node) if spot.room == ROOM]
+
+    # The game draws the kind as a mimic in this room, and as an Eyegore in Eastern Palace
+    model.set_items(frozenset({"Fighter Sword"}))
+    assert drawn() == [("RedEyegoreMimic", "RedMimic")]
+    model.set_items(frozenset())
+    assert drawn() == [("RedEyegoreMimic", "RedMimic"), ("GreenEyegoreMimic", "GreenMimic"), ("GreenEyegoreMimic", "GreenMimic")]
+    model.set_items(frozenset({"Bow"}))
+    assert drawn() == []
+
+
+def test_the_enemies_on_screen_change_when_the_items_held_do(window, app):
+    window.select_dungeon("Palace_of_Darkness")
+    page = window.pages["Palace_of_Darkness"]
+    page.model.add_tile(KILL_ROOMS[ROOM].tile, has_been_lit=True)
+    page.rebuild()
+    app.processEvents()
+    node = next(n for n in page.model.nodes() if page.model.enemy_spots(n))
+
+    def on_screen():
+        return [enemy.picture for enemy in page._doors[node].enemies]
+
+    assert on_screen() == ["RedMimic", "GreenMimic", "GreenMimic"]
+    window.set_held(frozenset({"Fighter Sword"}), {})
+    assert on_screen() == ["RedMimic"]
+    window.set_held(frozenset({"Fighter Sword", "Bow"}), {})
+    assert on_screen() == []
+    window.set_held(frozenset(), {})
+    assert on_screen() == ["RedMimic", "GreenMimic", "GreenMimic"]
 
 
 def test_the_enemy_picker_has_every_kind_and_na(window):

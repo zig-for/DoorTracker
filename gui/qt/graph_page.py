@@ -49,7 +49,7 @@ from data.room_bounds import room_bounds
 from data.worlds_data import World
 from gui.Doors import bosses, kill_rooms
 from gui.Doors.checks import Drop
-from gui.Doors.graph_model import ENEMY_SIZE, LOBBY_REACH, THUMB, Edge, GraphModel, TileState
+from gui.Doors.graph_model import ENEMY_SIZE, LOBBY_REACH, THUMB, Edge, EnemySpot, GraphModel, TileState
 from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
     DOORS,
@@ -527,7 +527,6 @@ class DoorsItem(QGraphicsItem):
         self.dots = page.model.door_dots(node)
         self.checks = page.model.check_spots(node) if page.top.settings["show_checks"] else []
         self.bosses = page.model.boss_spots(node)
-        self.enemies = page.model.enemy_spots(node)
         self.setZValue(3)
         # Hit shape is the dots only
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -537,6 +536,11 @@ class DoorsItem(QGraphicsItem):
 
     def shape(self):
         return QPainterPath()
+
+    @property
+    def enemies(self) -> list[EnemySpot]:
+        """The kill room enemies drawn here. Asked each time, as which are shown goes by the items held."""
+        return self.page.model.enemy_spots(self.node)
 
     def counts(self) -> list[tuple[str, QRectF, list[Drop]]]:
         """The room's counts of what is still to be had: (kind, where its picture and number are drawn, what it
@@ -625,7 +629,7 @@ class DoorsItem(QGraphicsItem):
             painter.drawRect(QRectF(enemy.x - half, enemy.y - half, ENEMY_SIZE, ENEMY_SIZE))
             if enemy.kind != kill_rooms.NA:
                 # As big as fits inside the plate's edge, in the picture's own shape. A question mark until picked
-                shown = page.assets.icon(REACHABLE) if enemy.kind == kill_rooms.UNKNOWN else page.assets.enemy(enemy.kind)
+                shown = page.assets.icon(REACHABLE) if enemy.kind == kill_rooms.UNKNOWN else page.assets.enemy(enemy.picture)
                 assert shown is not None
                 scale = (ENEMY_SIZE - 2 * ENEMY_EDGE) / max(shown.width(), shown.height())
                 wide, tall = shown.width() * scale, shown.height() * scale
@@ -1399,8 +1403,9 @@ class GraphPage(QWidget):
                 self.model.set_boss(press.hit.boss, boss)
                 self.rebuild()
         elif press.hit.enemy is not None:
-            # A click picks the enemy's kind and a right click takes that back; see _context
-            kind = self.top.pick_enemy()
+            # In a seed with enemies shuffled, a click picks the enemy's kind and a right click takes that back;
+            # see _context
+            kind = self.top.pick_enemy() if self.model.enemy_shuffle else None
             if kind:
                 self.model.set_enemy(*press.hit.enemy, kind)
                 self.rebuild()
@@ -1580,8 +1585,9 @@ class GraphPage(QWidget):
             model.set_boss(hit.boss, None)
             self.rebuild()
         elif hit.enemy is not None:
-            model.set_enemy(*hit.enemy, None)
-            self.rebuild()
+            if model.enemy_shuffle:
+                model.set_enemy(*hit.enemy, None)
+                self.rebuild()
         elif hit.icon is not None and entrance_only(hit.icon):
             model.set_entrance_used(hit.icon, False)
             self.rebuild()
