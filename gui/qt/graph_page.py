@@ -600,14 +600,15 @@ class DoorsItem(QGraphicsItem):
                 painter.setPen(QColor(colour))
                 number = box.adjusted(COUNT_SIZE + 1 + dx, dy, dx, dy)
                 painter.drawText(number, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, str(len(left)))
-        # A boss room's boss. Until the player has picked it, a skull with a question mark on the corner
+        # A boss room's boss. Until the player has picked it, a skull with a question mark on the corner. With a
+        # wide red edge while the player's items do not beat it
         half = BOSS_SIZE / 2
         for boss in self.bosses:
             box = QRectF(boss.x - half, boss.y - half, BOSS_SIZE, BOSS_SIZE)
             shown = page.assets.boss(boss.boss) if boss.boss else page.assets.icon("Skull")
             assert shown is not None  # the sheet has a skull
             draw_pixel_art(painter, box, shown)
-            painter.setPen(QPen(QColor("#111"), 1))
+            painter.setPen(QPen(QColor(OUTLINE), 1) if page.model.can_beat_boss(boss.tile) else QPen(QColor(BLOCKED), 2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(box)
             if not boss.boss:

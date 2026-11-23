@@ -1704,6 +1704,11 @@ class GraphModel:
         room = BOSS_ROOMS[node.tile]
         return [BossSpot(node.tile, self.bosses.get(node.tile), (room.x / 512 - 0.5) * THUMB, (room.y / 512 - 0.5) * THUMB)]
 
+    def can_beat_boss(self, tile: Tile) -> bool:
+        """Whether the player's items beat the boss picked for a boss room. One not picked counts as beaten."""
+        boss = self.bosses.get(tile)
+        return boss is None or holds(beating(tile, boss, self.dungeon_name), self._held, self._reachable)
+
     def set_boss(self, tile: Tile, boss: str | None) -> None:
         """Say which boss a boss room has. None for not known: it counts as beaten."""
         if boss is None:

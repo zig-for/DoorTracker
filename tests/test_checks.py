@@ -228,11 +228,11 @@ def test_a_boss_rooms_drops_take_beating_the_boss_picked_for_it():
     model.update()
     model.set_items(frozenset())
     # A boss not picked counts as beaten
-    assert model.check_state(name) is CheckState.OPEN
+    assert model.check_state(name) is CheckState.OPEN and model.can_beat_boss(tile)
     model.set_boss(tile, "Moldorm")
-    assert model.check_state(name) is CheckState.BLOCKED
+    assert model.check_state(name) is CheckState.BLOCKED and not model.can_beat_boss(tile)
     model.set_items(frozenset({"Hammer"}))
-    assert model.check_state(name) is CheckState.OPEN
+    assert model.check_state(name) is CheckState.OPEN and model.can_beat_boss(tile)
 
 
 def test_blind_in_thieves_town_is_only_there_once_the_maiden_is_unmasked():
