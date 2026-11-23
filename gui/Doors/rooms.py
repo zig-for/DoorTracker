@@ -150,6 +150,8 @@ DEFAULT_DOORS.update(MANUAL_DROPS)
 ONE_WAY = {name for name, _target in list(falldown_pits) + list(dungeon_warps)} | set(MANUAL_DROPS)
 # The holes among them. A seed can send a hole somewhere else; a warp always goes where it goes
 HOLES = {name for name, _target in falldown_pits} | set(MANUAL_DROPS)
+# Where the holes that are doors land: only ever fallen onto
+DROP_ENDS = frozenset(MANUAL_DROPS.values())
 
 # Rooms with no doors, by region
 DOORLESS_ROOMS = {

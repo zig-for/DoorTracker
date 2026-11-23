@@ -36,6 +36,7 @@ from gui.Doors.rules import big_key_passages, check_regions, check_rules, crysta
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
+    DROP_ENDS,
     DROPS_IN,
     Box,
     EdgeKind,
@@ -664,6 +665,15 @@ class GraphModel:
 
     # ------------------------------------------------------- auto tracking entry
 
+    def can_link(self, door: str, linked_door: str) -> bool:
+        """Whether two doors can be linked by the player. A hole is linked only to where a hole lands, and nothing
+        else is linked to there. With holes landing where the original game's do, neither is linked at all."""
+        ends = {door, linked_door}
+        holes, landings = ends & set(MANUAL_DROPS), ends & DROP_ENDS
+        if self.settings.get("vanilla_drops"):
+            return not holes and not landings
+        return bool(holes) == bool(landings)
+
     def auto_add_door_link(self, door: str | None, linked_door: str | None) -> bool:
         for d in [door, linked_door] if not self.decoupled() else [door]:
             if d is None or self.has_target(d) or d in INTERIOR_DOORS or d in self.lobby_door_names():
@@ -671,7 +681,7 @@ class GraphModel:
         if door is None or linked_door is None:
             return False
         directions = {door_direction(door), door_direction(linked_door)}
-        if directions not in VALID_AUTO_LINKS:
+        if directions not in VALID_AUTO_LINKS or not self.can_link(door, linked_door):
             return False
         self.add_link(door, linked_door)
         return True
