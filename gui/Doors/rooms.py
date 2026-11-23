@@ -285,12 +285,26 @@ def _build_room_links() -> tuple[Mapping[str, Door], tuple[RoomLink, ...]]:
                     continue  # same supertile: see _build_parts
                 # Keyed by part: two warps can join the same pair of supertiles
                 found.setdefault((part_of(start), part_of(end), kind), (name, start, end))
-    # The rooms joined by a hole that is a door, which is drawn as a drop
-    dropped = {(part_of(DOORS[a]), part_of(DOORS[b])) for a, b in MANUAL_DROPS.items()}
+    # Falls as (from, to) rooms: the holes that are doors, which are drawn as drops, and the holes here
+    drops = {(part_of(DOORS[a]), part_of(DOORS[b])) for a, b in MANUAL_DROPS.items()}
+    holes = {(ta, tb) for ta, tb, kind in found if kind is EdgeKind.HOLE}
+
+    def led(start, end, falls):
+        """Whether the falls lead from one room to the other."""
+        seen, queue = {start}, [start]
+        while queue:
+            room = queue.pop()
+            for a, b in falls:
+                if a == room and b not in seen:
+                    seen.add(b)
+                    queue.append(b)
+        return end in seen
+
     links = []
     for (ta, tb, kind), (name, start, end) in found.items():
-        if kind is EdgeKind.HOLE and (ta, tb) in dropped:
-            continue  # the same pit, from another side
+        if kind is EdgeKind.HOLE and led(ta, tb, drops | (holes - {(ta, tb)})):
+            holes.remove((ta, tb))
+            continue  # the other falls lead there already
         both_ways = (tb, ta, kind) in found
         if both_ways and (tb, ta) < (ta, tb):
             continue  # the reverse warp covers this pair
