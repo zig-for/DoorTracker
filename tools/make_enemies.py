@@ -93,6 +93,7 @@ SECOND_LOOKS = {
     "Raven": "New folder/Kyune",
     "Octorok": "New folder/Slarok",
     "FireballZora": "New folder/Ku",
+    "CricketRat": "New folder/Buzz",
     "Snake": "New folder/Stalrope",
 }
 
