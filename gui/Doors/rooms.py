@@ -164,6 +164,11 @@ WARP_SPOTS = {
     "GT Spike Crystals Warp": ((0.885, 0.26), (0.89, 0.265)),
     # Off the east side of the landing, where its rail has a gap. A fall lands at the same place in the room below
     "PoD Big Key Landing Hole": ((0.57, 0.27), (0.57, 0.27)),
+    # A warp lands at the same place in the room it leads to, as a fall does: the middle of its tile, in both.
+    # This one and the Warp Hint's lead to each other, so each end is the room's own tile
+    "PoD Warp Room Warp": ((360 / 512, 136 / 512), (392 / 512, 136 / 512)),
+    "PoD Stalfos Basement Warp": ((408 / 512, 136 / 512), (408 / 512, 136 / 512)),
+    "PoD Callback Warp": ((376 / 512, 392 / 512), (376 / 512, 392 / 512)),
 }
 
 
