@@ -82,6 +82,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "compass_reveals": False,
     "pottery": False,
     "enemy_drops": False,
+    "enemy_shuffle": False,
 }
 
 
@@ -599,6 +600,7 @@ class MainWindow(QMainWindow):
         # Named as the randomizer names the settings they are for
         add_box("pottery", "Pottery", "For a seed with Pottery set to Dungeon Pots or Lottery: each room counts down its pots not yet emptied")
         add_box("enemy_drops", "Enemy Drops", "For a seed with Enemy Drops set to Underworld Enemies: each room counts down its enemies' drops not yet taken")
+        add_box("enemy_shuffle", "Enemy Shuffle", "For a seed with Enemy Shuffle on: each kill room shows its enemies, to pick the kind of each")
         self.status = QLabel("")  # what the mouse is over
         self.status.setMinimumWidth(50)
         row.addWidget(self.status, 1)

@@ -5,7 +5,7 @@ Which rooms, which of their enemies and which doors and chests are from Rules.py
 takes is worked out by the randomizer's own defeat_rule_multiple, run on them.
 
 A seed with enemies shuffled has other enemies in the same places. The game does not say which until the player
-sees them, so the player picks. Until then each is the original game's.
+sees them, so the player picks. Until then an enemy is not known, and counts as one that need not be killed.
 """
 
 from dataclasses import dataclass
@@ -33,6 +33,8 @@ from ALttPDoorRandomizer.source.rom.DataTables import get_uw_enemy_table  # noqa
 PICTURES = Path(__file__).parent.parent.parent / "data" / "enemies"
 # In place of a kind: anything that need not be killed, like a Beamos
 NA = "N/A"
+# In place of a kind: not seen yet, in a seed with enemies shuffled
+UNKNOWN = "?"
 
 _STATS = init_enemy_stats()
 _SPRITES = get_uw_enemy_table().room_map
@@ -66,13 +68,6 @@ class Enemy:
     x: int  # where it stands in the supertile, 0..512
     y: int
     original: str  # its kind in the original game, or NA
-    picture: str  # the kind whose picture shows it there
-
-
-# The game has one kind for an Eyegore and a mimic, and draws it as a mimic in the rooms it has mimics in: those
-# with these numbers. The randomizer names a mimic as a kind of its own, for enemy shuffle to place
-MIMIC_ROOMS = {0x1B, 0x4B, 0x6B}
-MIMICS = {"GreenEyegoreMimic": "GreenMimic", "RedEyegoreMimic": "RedMimic"}
 
 
 @dataclass(frozen=True)
@@ -105,8 +100,7 @@ def _rooms() -> dict[str, KillRoom]:
             # One that neither counts nor can be changed never has to be killed: a statue that shoots
             if sprite.sub_type != SpriteType.Overlord and (counts or _shuffled(sprite)):
                 original = sprite.kind.name if counts else NA
-                picture = MIMICS.get(original, original) if room in MIMIC_ROOMS else TWINS.get(original, original)
-                enemies.append(Enemy(number, sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8, original, picture))
+                enemies.append(Enemy(number, sprite.tile_x * 16 + 8, sprite.tile_y * 16 + 8, original))
         # Not the caves, and not a room with none: it is listed for a seed with enemies' health shuffled
         if tile in SUPERTILES and enemies:
             assert all(check in checks for check in opens.get("checks", ())), name

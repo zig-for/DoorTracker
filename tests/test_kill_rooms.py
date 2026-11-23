@@ -34,16 +34,6 @@ def test_a_kind_left_out_as_the_twin_of_another_takes_the_same_to_kill():
         assert clearing(room, (twin,) * 3) == clearing(room, (kind,) * 3)
 
 
-def test_the_one_kind_is_drawn_as_a_mimic_in_a_mimic_room_and_as_an_eyegore_elsewhere():
-    def drawn(room):
-        model = new_model()
-        model.add_tile(KILL_ROOMS[room].tile, has_been_lit=True)
-        return [(spot.kind, spot.picture) for node in model.nodes() for spot in model.enemy_spots(node) if spot.room == room]
-
-    assert drawn(ROOM) == [("RedEyegoreMimic", "RedMimic"), ("GreenEyegoreMimic", "GreenMimic"), ("GreenEyegoreMimic", "GreenMimic")]
-    assert drawn("Eastern Single Eyegore")[0] == ("RedEyegoreMimic", "RedEyegoreMimic")
-
-
 def test_killing_a_rooms_enemies_takes_what_the_randomizer_says_it_does():
     def original(room):
         return clearing(room, tuple(enemy.original for enemy in KILL_ROOMS[room].enemies))
@@ -64,11 +54,23 @@ def test_a_kill_rooms_way_out_takes_killing_the_enemies_it_has():
     assert model.door_state(way) is DoorState.BLOCKED
     model.set_items(frozenset({"Bow"}))
     assert model.door_state(way) is DoorState.OPEN
-    # A seed with enemies shuffled has something else there: a Stalfos dies to the sword, as the green ones do
+
+
+def test_with_enemies_shuffled_a_kill_room_takes_killing_the_enemies_picked_for_it():
+    model = mimic_room("PoD Mimics 1 SW")
+    way = "PoD Mimics 1 NW"
     model.set_items(frozenset({"Fighter Sword"}))
+    model.enemy_shuffle = True
+    model.update()
+    # Nothing is known of its enemies yet
+    assert model.door_state(way) is DoorState.OPEN
+    model.set_enemy(ROOM, RED, "RedMimic")
+    assert model.door_state(way) is DoorState.BLOCKED
     model.set_enemy(ROOM, RED, "Stalfos")
     assert model.door_state(way) is DoorState.OPEN
-    model.set_enemy(ROOM, RED, None)
+    # What was picked is for a seed with enemies shuffled
+    model.enemy_shuffle = False
+    model.update()
     assert model.door_state(way) is DoorState.BLOCKED
 
 
@@ -106,7 +108,9 @@ def test_an_enemy_is_named_on_hover_and_its_kind_picked_by_clicking(window, app,
     window.select_dungeon("Palace_of_Darkness")
     page = window.pages["Palace_of_Darkness"]
     page.model.add_tile(KILL_ROOMS[ROOM].tile, has_been_lit=True)
-    page.rebuild()
+    # Enemies are only drawn for a seed with them shuffled
+    assert not [spot for node in page.model.nodes() for spot in page.model.enemy_spots(node)]
+    window.set_option("enemy_shuffle", True)
     page.fit_view()
     app.processEvents()
     node = next(n for n in page.model.nodes() if any(spot.room == ROOM for spot in page.model.enemy_spots(n)))
@@ -116,8 +120,8 @@ def test_an_enemy_is_named_on_hover_and_its_kind_picked_by_clicking(window, app,
     viewport = page.view.viewport()
 
     page.set_hover(page.hit_at(At(on_it)))
-    assert page.status.text() == f"{ROOM}: RedEyegoreMimic"
-    # A click picks its kind, and a right click goes back to the original game's
+    assert page.status.text() == f"{ROOM}: ?"
+    # A click picks its kind, and a right click goes back to not known
     monkeypatch.setattr(window, "pick_enemy", lambda: NA)
     QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, pos=on_it)
     assert page.model.enemies == {(ROOM, RED): NA}

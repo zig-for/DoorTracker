@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from data.doors_data import mandatory_tiles
-from data.doors_sprite_data import ITEM_SHEET_PATH, POT_PATH
+from data.doors_sprite_data import ITEM_SHEET_PATH, POT_PATH, REACHABLE
 from data.room_bounds import room_bounds
 from data.worlds_data import World
 from gui.Doors import bosses, kill_rooms
@@ -95,6 +95,7 @@ MODEL_OPTIONS = {
     "show_all_doors": "show_all_doors",
     "auto_join": "auto_join",
     "circle_repulsion": "circle_repulsion",
+    "enemy_shuffle": "enemy_shuffle",
     "spacing": "spacing",
     "dead_end_pull": "leaf_pull",
 }
@@ -619,13 +620,13 @@ class DoorsItem(QGraphicsItem):
         half = ENEMY_SIZE / 2
         for enemy in self.enemies:
             clear = page.model.can_clear(enemy.room)
-            counts = enemy.kind != kill_rooms.NA
             painter.setPen(QPen(QColor(OUTLINE if clear else BLOCKED), 1))
-            painter.setBrush(QColor(ENEMY_PLATE_NA if not counts else ENEMY_PLATE if clear else ENEMY_PLATE_BLOCKED))
+            painter.setBrush(QColor(ENEMY_PLATE_NA if enemy.kind == kill_rooms.NA else ENEMY_PLATE if clear else ENEMY_PLATE_BLOCKED))
             painter.drawRect(QRectF(enemy.x - half, enemy.y - half, ENEMY_SIZE, ENEMY_SIZE))
-            if counts:
-                # As big as fits inside the plate's edge, in the picture's own shape
-                shown = page.assets.enemy(enemy.picture)
+            if enemy.kind != kill_rooms.NA:
+                # As big as fits inside the plate's edge, in the picture's own shape. A question mark until picked
+                shown = page.assets.icon(REACHABLE) if enemy.kind == kill_rooms.UNKNOWN else page.assets.enemy(enemy.kind)
+                assert shown is not None
                 scale = (ENEMY_SIZE - 2 * ENEMY_EDGE) / max(shown.width(), shown.height())
                 wide, tall = shown.width() * scale, shown.height() * scale
                 draw_pixel_art(painter, QRectF(enemy.x - wide / 2, enemy.y - tall / 2, wide, tall), shown)

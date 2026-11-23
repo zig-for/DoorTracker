@@ -29,7 +29,7 @@ from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
 from gui.Doors.bosses import BOSS_ROOMS, beating
 from gui.Doors.checks import BIG_KEY_DROPS, Drop, checks
-from gui.Doors.kill_rooms import KILL_CHECKS, KILL_ROOMS, ROOMS_BY_TILE, clearing
+from gui.Doors.kill_rooms import KILL_CHECKS, KILL_ROOMS, NA, ROOMS_BY_TILE, UNKNOWN, clearing
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
 from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, STARTING_ITEMS, Rule, holds
 from gui.Doors.rules import big_key_passages, check_regions, check_rules, crystals, events, passage_rules
@@ -150,8 +150,7 @@ class BossSpot:
 class EnemySpot:
     room: str  # the kill room, in gui/Doors/kill_rooms.py
     number: int  # the enemy's place in the room's list of sprites
-    kind: str  # as the player picked it or as the original game has it; NA for one that need not be killed
-    picture: str  # the kind whose picture shows it
+    kind: str  # as the player picked it: one of kill_rooms.PICKS, or NA. UNKNOWN until then
     x: float  # relative to the node's centre, world units
     y: float
 
@@ -211,6 +210,7 @@ class GraphModel:
         self.show_all_doors = False
         self.linking = False  # a link is being made: every door is shown, to pick its other end from
         self.auto_join = True
+        self.enemy_shuffle = False  # the seed has enemies shuffled: a kill room's are the ones the player picks
         self.spacing = float(REPEL_RANGE)  # repulsion reach
         self.leaf_pull = 2.5  # pull boost for blocks linked to a single other block
         self.circle_repulsion = False  # repel as one enclosing circle per block
@@ -1682,8 +1682,12 @@ class GraphModel:
         self._find_reach()
 
     def enemy_kinds(self, room: str) -> tuple[str, ...]:
-        """The kind of each of a kill room's enemies, in their order: as picked, or else the original game's."""
-        return tuple(self.enemies.get((room, enemy.number), enemy.original) for enemy in KILL_ROOMS[room].enemies)
+        """The kind of each of a kill room's enemies, in their order: the original game's, or as picked in a seed
+        with enemies shuffled. One not picked yet could be anything: it is taken as one that need not be killed."""
+        enemies = KILL_ROOMS[room].enemies
+        if not self.enemy_shuffle:
+            return tuple(enemy.original for enemy in enemies)
+        return tuple(self.enemies.get((room, enemy.number), NA) for enemy in enemies)
 
     def kill_rule(self, room: str) -> Rule:
         """What killing a kill room's enemies takes."""
@@ -1694,9 +1698,10 @@ class GraphModel:
         return holds(self.kill_rule(room), self._held, self._reachable)
 
     def enemy_spots(self, node: Node) -> list[EnemySpot]:
-        """The enemies drawn on a node, for each kill room on it. None on a pill, or on a dark room not yet seen
-        lit. A room's are in rows, centred where its enemies stand and kept inside the supertile."""
-        if node in self.compact or self.is_hidden_dark(node.tile):
+        """The enemies drawn on a node, for each kill room on it, in a seed with enemies shuffled. None on a pill,
+        or on a dark room not yet seen lit. A room's are in rows, centred where its enemies stand and kept inside
+        the supertile."""
+        if not self.enemy_shuffle or node in self.compact or self.is_hidden_dark(node.tile):
             return []
         split = self.rooms.part_count(node.tile) > 1
         spots = []
@@ -1714,14 +1719,12 @@ class GraphModel:
             top = min(max((y / 512 - 0.5) * THUMB - tall / 2, -edge), edge - tall)
             for place, enemy in enumerate(enemies):
                 column, row = place % ENEMIES_ACROSS, place // ENEMIES_ACROSS
-                picked = self.enemies.get((name, enemy.number))
-                kind, picture = (enemy.original, enemy.picture) if picked is None else (picked, picked)
-                spots.append(EnemySpot(name, enemy.number, kind, picture, left + (column + 0.5) * ENEMY_SIZE, top + (row + 0.5) * ENEMY_SIZE))
+                kind = self.enemies.get((name, enemy.number), UNKNOWN)
+                spots.append(EnemySpot(name, enemy.number, kind, left + (column + 0.5) * ENEMY_SIZE, top + (row + 0.5) * ENEMY_SIZE))
         return spots
 
     def set_enemy(self, room: str, number: int, kind: str | None) -> None:
-        """Say which kind one of a kill room's enemies is: one of kill_rooms.PICKS, or NA. None for the original
-        game's."""
+        """Say which kind one of a kill room's enemies is: one of kill_rooms.PICKS, or NA. None for not known."""
         if kind is None:
             self.enemies.pop((room, number), None)
         else:
