@@ -29,8 +29,9 @@ from data.worlds_data import World, dungeon_worlds
 from gui.Doors import layout, rooms
 from gui.Doors.bosses import BOSS_ROOMS, beating
 from gui.Doors.checks import BIG_KEY_DROPS, Drop, checks
+from gui.Doors.kill_rooms import KILL_CHECKS, KILL_ROOMS, ROOMS_BY_TILE, clearing
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
-from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, STARTING_ITEMS, holds
+from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, STARTING_ITEMS, Rule, holds
 from gui.Doors.rules import big_key_passages, check_regions, check_rules, crystals, events, passage_rules
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
@@ -62,6 +63,8 @@ for _name, _check in checks.items():
     CHECKS_BY_TILE[_check["tile"]].append(_name)
 
 THUMB = 128  # supertile thumbnail edge
+ENEMY_SIZE = 8.0  # side of one of a kill room's enemies, world units
+ENEMIES_ACROSS = 5  # the most of them in a row
 COMPACT_W = 104  # pass-through tiles collapse to a pill
 COMPACT_H = 26
 JOIN_GAP = 4  # gap between joined rooms
@@ -139,6 +142,16 @@ class CheckSpot:
 class BossSpot:
     tile: Tile  # the boss room
     boss: str | None  # None until the player picks it
+    x: float  # relative to the node's centre, world units
+    y: float
+
+
+@dataclass(frozen=True)
+class EnemySpot:
+    room: str  # the kill room, in gui/Doors/kill_rooms.py
+    number: int  # the enemy's place in the room's list of sprites
+    kind: str  # as the player picked it or as the original game has it; NA for one that need not be killed
+    picture: str  # the kind whose picture shows it
     x: float  # relative to the node's centre, world units
     y: float
 
@@ -222,6 +235,7 @@ class GraphModel:
         self.special_doors: dict[str, str] = {}  # door -> icon
         self.bosses: dict[Tile, str] = {}  # boss room -> its boss, as the player picked it or as the seed has it
         self.bosses_revealed: set[Tile] = set()  # the boss rooms that have had the seed's own boss: see reveal_bosses
+        self.enemies: dict[tuple[str, int], str] = {}  # (kill room, enemy's number) -> its kind, where the player picked it
         self.revealed = False  # the map is the seed's own, put here by show_seed
         self.kept_expanded: set[Node] = set()  # see toggle_expanded
         self.sanc_dungeon = False
@@ -513,9 +527,9 @@ class GraphModel:
         links: the doors the seed joined, in every dungeon, as (door, the door it leads to).
         entrances: this dungeon's own, by name -> the door each comes in by.
         What can be walked to from the entrances is this dungeon: the links there are kept, and every room is lit.
-        A boss room still on the map keeps its boss.
+        A boss room still on the map keeps its boss, and a kill room its enemies.
         """
-        used, bosses, bosses_revealed = self.used_entrances, self.bosses, self.bosses_revealed
+        used, bosses, bosses_revealed, enemies = self.used_entrances, self.bosses, self.bosses_revealed, self.enemies
         notes = {door: icon for door, icon in self.special_doors.items() if door not in self.lobby_door_names()}
         self.reset()
         self.used_entrances, self.revealed = used, True
@@ -535,6 +549,7 @@ class GraphModel:
             state.has_been_lit = True
         self.bosses = {tile: boss for tile, boss in bosses.items() if tile in self.tiles}
         self.bosses_revealed = bosses_revealed & set(self.tiles)
+        self.enemies = {(room, number): kind for (room, number), kind in enemies.items() if KILL_ROOMS[room].tile in self.tiles}
         self.relayout()
         self._find_reach()
 
@@ -582,6 +597,7 @@ class GraphModel:
             self.special_doors.pop(door, None)
         self.bosses.pop(tile, None)
         self.bosses_revealed.discard(tile)
+        self.enemies = {(room, number): kind for (room, number), kind in self.enemies.items() if KILL_ROOMS[room].tile != tile}
         del self.tiles[tile]
         for node in [n for n in self.pos if n.tile == tile]:
             del self.pos[node]
@@ -674,6 +690,7 @@ class GraphModel:
             column, row = str(key).split("__")
             self.bosses[(int(column), int(row))] = boss
         self.bosses_revealed = {(int(column), int(row)) for column, row in (key.split("__") for key in data.get("bosses_revealed") or [])}
+        self.enemies = {(room, int(number)): kind for room, picked in (data.get("enemies") or {}).items() for number, kind in picked.items()}
         self.used_entrances = set(data.get("used_entrances") or [])
         self.tiles = {}
         self.pos = {}
@@ -742,6 +759,9 @@ class GraphModel:
                 entry["join"] = link.join
             door_links.append(entry)
         position = {link: n for n, link in enumerate(self.door_links)}
+        enemies: dict[str, dict[int, str]] = {}
+        for (room, number), kind in self.enemies.items():
+            enemies.setdefault(room, {})[number] = kind
         return {
             "door_links": door_links,
             # Joined links as positions in door_links, in claim order, so load rebuilds the same blocks
@@ -757,6 +777,7 @@ class GraphModel:
             "special_doors": dict(self.special_doors),
             "bosses": {f"{x}__{y}": boss for (x, y), boss in self.bosses.items()},
             "bosses_revealed": sorted(f"{x}__{y}" for x, y in self.bosses_revealed),
+            "enemies": enemies,
             "revealed": self.revealed,
             "used_entrances": sorted(self.used_entrances),
             "expanded": sorted(f"{n.x}__{n.y}__{n.part}" for n in self.kept_expanded),
@@ -926,8 +947,9 @@ class GraphModel:
         way, like draining the swamp; and the doors and passages gone out by, linked to anything or not.
 
         A door or passage is gone through when its crystal barrier, if it has one, is down and its rule is met,
-        out of a boss room whose boss the player has picked, when that boss can be beaten, and by a door marked
-        as a big key door or into Zelda's cell or Blind's, when the big key is held.
+        out of a boss room whose boss the player has picked, when that boss can be beaten, out of a kill room
+        when its enemies can be killed, and by a door marked as a big key door or into Zelda's cell or Blind's,
+        when the big key is held.
         What is reached stays reached. A rule can ask for a region reached, so every way out is tried again until
         no more is reached. Only then is what got done on the way counted, and every way out tried again: a rule
         can ask for something not done, and is asked before it is.
@@ -947,6 +969,12 @@ class GraphModel:
         # linked to is locked only if marked too
         locked = big_key_passages | {door for door, icon in self.special_doors.items() if icon == "Big Key Door"}
         big_key = BIG_KEYS[self.dungeon_name]
+        # Way out of a kill room -> what killing its enemies takes. Some of its doors take it only as trap doors,
+        # which a seed can make them: those once they are marked as one
+        killed = {}
+        for name, room in KILL_ROOMS.items():
+            traps = [way for way in room.trap_ways if self.special_doors.get(way) == "Trap Door"]
+            killed |= {way: self.kill_rule(name) for way in (*room.ways, *traps)}
 
         def arrive(name: str, down: int) -> None:
             for region in regions_at(name):
@@ -966,7 +994,12 @@ class GraphModel:
                     # A way through a barrier takes its colour down, and leaves it down. The way back from hitting
                     # a crystal switch leaves whichever the player likes
                     barrier = crystals.get(way_out, 0)
-                    rules = (passage_rules.get(way_out, True), beaten.get(way_out, True), big_key if way_out in locked else True)
+                    rules = (
+                        passage_rules.get(way_out, True),
+                        beaten.get(way_out, True),
+                        killed.get(way_out, True),
+                        big_key if way_out in locked else True,
+                    )
                     if items is None or ((not barrier or down & barrier) and all(holds(rule, held, reached) for rule in rules)):
                         gone_out_by.add(way_out)
                         for target in leads.get(way_out, ()):
@@ -1003,6 +1036,8 @@ class GraphModel:
         if name.endswith("- Big Chest"):
             # A big chest takes the big key of the dungeon it is in, which with crossed doors is this tab's
             rule = ("all", rule, BIG_KEYS[self.dungeon_name])
+        if name in KILL_CHECKS:
+            rule = ("all", rule, self.kill_rule(KILL_CHECKS[name]))
         routed = region in self._routed
         if routed:
             opens = holds(rule, self._held, self._reachable)
@@ -1643,6 +1678,52 @@ class GraphModel:
             self.bosses.pop(tile, None)
         else:
             self.bosses[tile] = boss
+        self._find_reach()
+
+    def enemy_kinds(self, room: str) -> tuple[str, ...]:
+        """The kind of each of a kill room's enemies, in their order: as picked, or else the original game's."""
+        return tuple(self.enemies.get((room, enemy.number), enemy.original) for enemy in KILL_ROOMS[room].enemies)
+
+    def kill_rule(self, room: str) -> Rule:
+        """What killing a kill room's enemies takes."""
+        return clearing(room, self.enemy_kinds(room))
+
+    def can_clear(self, room: str) -> bool:
+        """Whether the player's items kill a kill room's enemies."""
+        return holds(self.kill_rule(room), self._held, self._reachable)
+
+    def enemy_spots(self, node: Node) -> list[EnemySpot]:
+        """The enemies drawn on a node, for each kill room on it. None on a pill, or on a dark room not yet seen
+        lit. A room's are in rows, centred where its enemies stand and kept inside the supertile."""
+        if node in self.compact or self.is_hidden_dark(node.tile):
+            return []
+        split = self.rooms.part_count(node.tile) > 1
+        spots = []
+        for name in ROOMS_BY_TILE.get(node.tile, ()):
+            enemies = KILL_ROOMS[name].enemies
+            x = sum(enemy.x for enemy in enemies) / len(enemies)
+            y = sum(enemy.y for enemy in enemies) / len(enemies)
+            if split and self.player_node(node.tile, x, y) != node:
+                continue
+            across = min(len(enemies), ENEMIES_ACROSS)
+            down = -(-len(enemies) // ENEMIES_ACROSS)
+            wide, tall = across * ENEMY_SIZE, down * ENEMY_SIZE
+            edge = THUMB / 2 - 2
+            left = min(max((x / 512 - 0.5) * THUMB - wide / 2, -edge), edge - wide)
+            top = min(max((y / 512 - 0.5) * THUMB - tall / 2, -edge), edge - tall)
+            for place, enemy in enumerate(enemies):
+                column, row = place % ENEMIES_ACROSS, place // ENEMIES_ACROSS
+                picked = self.enemies.get((name, enemy.number))
+                kind, picture = (enemy.original, enemy.picture) if picked is None else (picked, picked)
+                spots.append(EnemySpot(name, enemy.number, kind, picture, left + (column + 0.5) * ENEMY_SIZE, top + (row + 0.5) * ENEMY_SIZE))
+        return spots
+
+    def set_enemy(self, room: str, number: int, kind: str | None) -> None:
+        """Say which kind one of a kill room's enemies is. None for the original game's."""
+        if kind is None:
+            self.enemies.pop((room, number), None)
+        else:
+            self.enemies[(room, number)] = kind
         self._find_reach()
 
     def drops_on(self, node: Node, drops: Sequence[Drop]) -> list[Drop]:

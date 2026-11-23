@@ -11,13 +11,15 @@ import types
 from functools import cache
 from pathlib import Path
 
+import yaml
+
 FOLDER = Path(__file__).resolve().parent.parent.parent / "ALttPDoorRandomizer"
 if not (FOLDER / "Rules.py").exists():
     raise FileNotFoundError(f"The door randomizer is not in {FOLDER}: run  git submodule update --init")
 
-# This copy of the randomizer imports Archipelago's Utils by bare name, for a function the tracker never reaches
+# This copy of the randomizer imports Archipelago's Utils by bare name, for the function it reads its YAML with
 _utils = types.ModuleType("Utils")
-setattr(_utils, "parse_yaml", None)
+setattr(_utils, "parse_yaml", yaml.safe_load)
 sys.modules.setdefault("Utils", _utils)
 # Its client, MultiClient.py, imports three packages to talk to a server. The tracker only takes tables from it,
 # so an empty module stands in for each that is not installed

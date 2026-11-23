@@ -47,9 +47,9 @@ from data.doors_data import mandatory_tiles
 from data.doors_sprite_data import ITEM_SHEET_PATH, POT_PATH
 from data.room_bounds import room_bounds
 from data.worlds_data import World
-from gui.Doors import bosses
+from gui.Doors import bosses, kill_rooms
 from gui.Doors.checks import Drop
-from gui.Doors.graph_model import LOBBY_REACH, THUMB, Edge, GraphModel, TileState
+from gui.Doors.graph_model import ENEMY_SIZE, LOBBY_REACH, THUMB, Edge, GraphModel, TileState
 from gui.Doors.layout import LINK_GAP
 from gui.Doors.rooms import (
     DOORS,
@@ -67,6 +67,7 @@ from gui.Doors.rooms import (
 from gui.qt.items_panel import BIG_KEY_PICTURE, ITEMS, PICTURE_NAMES, ItemsPanel, picture
 from gui.qt.style import (
     BACKGROUND,
+    BLOCKED,
     CHECK_COLLECTED,
     CHECK_STYLES,
     DOOR_RADIUS,
@@ -74,6 +75,9 @@ from gui.qt.style import (
     DOOR_STYLES,
     DROP_COLOUR,
     EDGE_FADED,
+    ENEMY_PLATE,
+    ENEMY_PLATE_BLOCKED,
+    ENEMY_PLATE_NA,
     OUTLINE,
     PLAYER,
     WARP_COLOUR,
@@ -101,6 +105,7 @@ CHECK_EDGE = 1.5  # how much of the square shows round a picture in it
 POT_EDGE = 2.0  # and round a pot
 KEY_PICTURES = {"enemy": "Small Key", "big key": BIG_KEY_PICTURE}  # a dropped key's kind -> the randomizer's picture
 BOSS_SIZE = 12.0  # side of a boss room's boss
+ENEMY_EDGE = 0.75  # how much of its plate shows round one of a kill room's enemies
 COUNT_SIZE = 6  # height of a room's counts of pots and enemies
 TIP_DELAY = 400  # ms the mouse stays on a count before what it counts pops up
 # A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
@@ -118,6 +123,7 @@ class Hit:
     edge: Edge | None = None  # a line between doors
     check: str | None = None  # a check's square, with the node it is on
     boss: Tile | None = None  # a boss room's boss, with the node it is on
+    enemy: tuple[str, int] | None = None  # one of a kill room's enemies: (room, its number), with the node it is on
     count: str | None = None  # a room's count of "pot" or of "enemy", with the node it is on
 
 
@@ -190,6 +196,7 @@ class Assets:
         self._pot: QPixmap | None = None
         self._boss_sheet: QPixmap | None = None
         self._bosses: dict[str, QPixmap] = {}
+        self._enemies: dict[str, QPixmap] = {}
 
     def thumbnail(self, tile: Tile, size: int) -> QPixmap:
         """Supertile picture at an exact size, for the supertile picker."""
@@ -252,6 +259,12 @@ class Assets:
                 self._boss_sheet = QPixmap(str(bosses.SHEET_PATH))
             self._bosses[name] = self._boss_sheet.copy(bosses.BOSSES.index(name) * bosses.ICON, 0, bosses.ICON, bosses.ICON)
         return self._bosses[name]
+
+    def enemy(self, kind: str) -> QPixmap:
+        """The picture of a kind of enemy, one of kill_rooms.KINDS."""
+        if kind not in self._enemies:
+            self._enemies[kind] = QPixmap(str(kill_rooms.PICTURES / f"{kind}.png"))
+        return self._enemies[kind]
 
     def icon(self, name: str) -> QPixmap | None:
         import data.doors_sprite_data as sprites
@@ -513,6 +526,7 @@ class DoorsItem(QGraphicsItem):
         self.dots = page.model.door_dots(node)
         self.checks = page.model.check_spots(node) if page.top.settings["show_checks"] else []
         self.bosses = page.model.boss_spots(node)
+        self.enemies = page.model.enemy_spots(node)
         self.setZValue(3)
         # Hit shape is the dots only
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -601,6 +615,20 @@ class DoorsItem(QGraphicsItem):
                 for dx, dy, colour in ((0.5, 0.5, "black"), (-0.5, -0.5, "black"), (0.5, -0.5, "black"), (-0.5, 0.5, "black"), (0, 0, "white")):
                     painter.setPen(QColor(colour))
                     painter.drawText(corner.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, "?")
+        # A kill room's enemies, each on a plate
+        half = ENEMY_SIZE / 2
+        for enemy in self.enemies:
+            clear = page.model.can_clear(enemy.room)
+            counts = enemy.kind != kill_rooms.NA
+            painter.setPen(QPen(QColor(OUTLINE if clear else BLOCKED), 1))
+            painter.setBrush(QColor(ENEMY_PLATE_NA if not counts else ENEMY_PLATE if clear else ENEMY_PLATE_BLOCKED))
+            painter.drawRect(QRectF(enemy.x - half, enemy.y - half, ENEMY_SIZE, ENEMY_SIZE))
+            if counts:
+                # As big as fits inside the plate's edge, in the picture's own shape
+                shown = page.assets.enemy(enemy.picture)
+                scale = (ENEMY_SIZE - 2 * ENEMY_EDGE) / max(shown.width(), shown.height())
+                wide, tall = shown.width() * scale, shown.height() * scale
+                draw_pixel_art(painter, QRectF(enemy.x - wide / 2, enemy.y - tall / 2, wide, tall), shown)
         for dot in self.dots:
             style = DOOR_STYLES[page.model.door_state(dot.door)]
             fill, edge, radius, outline = style.fill, style.edge, DOOR_RADIUS * style.scale, style.outline
@@ -1284,6 +1312,9 @@ class GraphPage(QWidget):
             for boss in self._doors[hit.node].bosses:
                 if abs(scene_pos.x() - x - boss.x) <= BOSS_SIZE / 2 and abs(scene_pos.y() - y - boss.y) <= BOSS_SIZE / 2:
                     return Hit(node=hit.node, boss=boss.tile)
+            for enemy in self._doors[hit.node].enemies:
+                if abs(scene_pos.x() - x - enemy.x) <= ENEMY_SIZE / 2 and abs(scene_pos.y() - y - enemy.y) <= ENEMY_SIZE / 2:
+                    return Hit(node=hit.node, enemy=(enemy.room, enemy.number))
             for kind, box, _left in self._doors[hit.node].counts():
                 if box.contains(scene_pos.x() - x, scene_pos.y() - y):
                     return Hit(node=hit.node, count=kind)
@@ -1365,6 +1396,12 @@ class GraphPage(QWidget):
             boss = self.top.pick_boss()
             if boss:
                 self.model.set_boss(press.hit.boss, boss)
+                self.rebuild()
+        elif press.hit.enemy is not None:
+            # A click picks the enemy's kind and a right click takes that back; see _context
+            kind = self.top.pick_enemy()
+            if kind:
+                self.model.set_enemy(*press.hit.enemy, kind)
                 self.rebuild()
         elif press.hit.icon is not None and entrance_only(press.hit.icon):
             # A drop or the mirror route: the player can use it
@@ -1479,6 +1516,9 @@ class GraphPage(QWidget):
                 text = hit.check + ("   (collected)" if hit.check in self.top.collected else "")
             elif hit.boss is not None:
                 text = f"Boss: {model.bosses.get(hit.boss, '?   (click to pick)')}"
+            elif hit.enemy is not None:
+                (kind,) = [enemy.kind for enemy in self._doors[node].enemies if (enemy.room, enemy.number) == hit.enemy]
+                text = f"{hit.enemy[0]}: {kind}"
             elif hit.count is not None:
                 # What the count is counting, by name
                 (left,) = [left for kind, _box, left in self._doors[node].counts() if kind == hit.count]
@@ -1537,6 +1577,9 @@ class GraphPage(QWidget):
             self.top.set_collected(hit.check, False)
         elif hit.boss is not None:
             model.set_boss(hit.boss, None)
+            self.rebuild()
+        elif hit.enemy is not None:
+            model.set_enemy(*hit.enemy, None)
             self.rebuild()
         elif hit.icon is not None and entrance_only(hit.icon):
             model.set_entrance_used(hit.icon, False)

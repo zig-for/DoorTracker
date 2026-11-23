@@ -11,26 +11,7 @@ from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, ORANGE, READABLE, ho
 from gui.Doors.rooms import DOORS, SPLIT, Node
 from gui.Doors.rules import check_regions, check_rules, passage_rules
 from gui.qt.style import BLOCKED, DOOR_OPEN
-from support import new_model
-
-
-class At:
-    """Stands in for a mouse event at a point of the viewport."""
-
-    def __init__(self, point):
-        self.point = point
-
-    def position(self):
-        return QPointF(self.point)
-
-
-def model_leading_to(name, tab):
-    """A map of the check's supertile, with an entrance on a door of the region the check is in."""
-    model = new_model(tab)
-    model.add_tile(checks[name]["tile"], has_been_lit=True)
-    model.add_lobby_door(next(door for door in regions_to_doors[check_regions[name]] if door in DOORS), tab)
-    model.update()
-    return model
+from support import At, model_leading_to, new_model
 
 
 def test_every_check_is_drawn_on_exactly_one_part_of_its_supertile():
@@ -206,9 +187,10 @@ def test_a_check_past_a_passage_is_blocked_until_the_item_for_the_passage_is_hel
     model.add_tile(checks[name]["tile"], has_been_lit=True)
     model.add_lobby_door("Swamp Lobby S", "Swamp_Palace")
     model.update()
-    model.set_items(frozenset())
+    # The sword is for the enemies by the chest, which it takes killing
+    model.set_items(frozenset({"Fighter Sword"}))
     assert model.check_state(name) is CheckState.BLOCKED
-    model.set_items(frozenset({"Flippers"}))
+    model.set_items(frozenset({"Fighter Sword", "Flippers"}))
     assert model.check_state(name) is CheckState.OPEN
 
 
@@ -230,6 +212,8 @@ def test_a_door_marked_as_somewhere_the_player_can_get_to_is_a_way_in():
     model = new_model("Swamp_Palace")
     model.add_tile(checks[name]["tile"], has_been_lit=True)
     model.update()
+    # For the enemies by the chest, which it takes killing
+    model.set_items(frozenset({"Fighter Sword"}))
     assert model.check_state(name) is CheckState.UNROUTED
     model.annotate(next(door for door in regions_to_doors[check_regions[name]] if door in DOORS), REACHABLE, [])
     assert model.check_state(name) is CheckState.OPEN

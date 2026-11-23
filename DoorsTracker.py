@@ -39,6 +39,7 @@ from gui import files
 from gui.Doors import link_sprite, rooms, seed_map
 from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import DROPS, Drop, checks
+from gui.Doors.kill_rooms import KINDS, NA
 from gui.Doors.layout import REPEL_RANGE
 from gui.Doors.logic import COMPASSES, MAPS, STARTING_ITEMS, items_held, small_keys
 from gui.qt.graph_page import Assets, GraphPage
@@ -131,6 +132,8 @@ CREDITS = (
     "<p>Logic from aerinon's <a href='https://github.com/aerinon/ALttPDoorRandomizer'>ALttP Door Randomizer</a> "
     "(<a href='https://github.com/aurabot24/ALttPDoorRandomizer'>aurabot24's fork</a>).</p>"
     "<p>Auto-tracking is through <a href='https://github.com/alttpo/sni'>SNI</a>.</p>"
+    "<p>Enemy pictures from StripesOO7's "
+    "<a href='https://github.com/StripesOO7/alttp-ap-poptracker-pack'>ALttP PopTracker pack</a>.</p>"
     "<p>The pictures from The Legend of Zelda: A Link to the Past are copyright Nintendo.</p>"
 )
 
@@ -233,6 +236,32 @@ class BossPicker(Picker):
             button.setIconSize(QSize(64, 64))
             button.setToolTip(boss)
             button.setObjectName(boss)
+            button.clicked.connect(self._pick)
+            grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
+
+
+class EnemyPicker(Picker):
+    """The kinds one of a kill room's enemies can be, to pick the one it is."""
+
+    ACROSS = 10
+    SIDE = 48
+
+    def __init__(self, parent, assets):
+        super().__init__(parent, "Enemy")
+        grid = QGridLayout(self)
+        grid.setSpacing(2)
+        for place, kind in enumerate([*KINDS, NA]):
+            button = QToolButton()
+            if kind == NA:
+                button.setText(NA)
+                button.setToolTip("Anything else: it does not have to be killed")
+            else:
+                side = self.SIDE - 8
+                button.setIcon(QIcon(assets.enemy(kind).scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)))
+                button.setIconSize(QSize(side, side))
+                button.setToolTip(kind)
+            button.setFixedSize(self.SIDE, self.SIDE)
+            button.setObjectName(kind)
             button.clicked.connect(self._pick)
             grid.addWidget(button, place // self.ACROSS, place % self.ACROSS)
 
@@ -989,6 +1018,10 @@ class MainWindow(QMainWindow):
 
     def pick_boss(self) -> str | None:
         dialog = BossPicker(self, self.assets)
+        return dialog.choice if dialog.exec() else None
+
+    def pick_enemy(self) -> str | None:
+        dialog = EnemyPicker(self, self.assets)
         return dialog.choice if dialog.exec() else None
 
     def pick_eg_tile(self, page: GraphPage) -> rooms.Tile | None:
