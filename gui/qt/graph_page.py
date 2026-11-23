@@ -75,10 +75,10 @@ from gui.qt.style import (
     DOOR_STYLES,
     DROP_COLOUR,
     EDGE_FADED,
-    ENEMY_PLATE,
-    ENEMY_PLATE_BLOCKED,
-    ENEMY_PLATE_NA,
     OUTLINE,
+    PLATE,
+    PLATE_BLOCKED,
+    PLATE_NA,
     PLAYER,
     WARP_COLOUR,
     dungeon_colour,
@@ -104,7 +104,7 @@ CHECK_EDGE = 1.5  # how much of the square shows round a picture in it
 POT_EDGE = 2.0  # and round a pot
 KEY_PICTURES = {"enemy": "Small Key", "big key": BIG_KEY_PICTURE}  # a dropped key's kind -> the randomizer's picture
 BOSS_SIZE = 12.0  # side of a boss room's boss
-ENEMY_EDGE = 0.75  # how much of its plate shows round one of a kill room's enemies
+PLATE_EDGE = 0.75  # how much of its plate shows round a boss, or one of a kill room's enemies
 COUNT_SIZE = 6  # height of a room's counts of pots and enemies
 TIP_DELAY = 400  # ms the mouse stays on a count before what it counts pops up
 # A room this close to where it is drawn is not redrawn: under half a pixel at full zoom. A settled map still
@@ -169,6 +169,18 @@ def draw_pixel_art(painter: QPainter, target: QRectF, picture: QPixmap) -> None:
     if key not in _enlarged:
         _enlarged[key] = picture.scaled(picture.width() * times, picture.height() * times, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
     painter.drawPixmap(target, _enlarged[key], QRectF(_enlarged[key].rect()))
+
+
+def draw_plate(painter: QPainter, x: float, y: float, side: float, fill: str, blocked: bool, picture: QPixmap | None) -> None:
+    """Draw a square plate with its middle at (x, y), and a picture on it: as big as fits inside the plate's
+    edge, in the picture's own shape. blocked: its edge is red, for what the player's items do not get past."""
+    painter.setPen(QPen(QColor(BLOCKED if blocked else OUTLINE), 1))
+    painter.setBrush(QColor(fill))
+    painter.drawRect(QRectF(x - side / 2, y - side / 2, side, side))
+    if picture is not None:
+        scale = (side - 2 * PLATE_EDGE) / max(picture.width(), picture.height())
+        wide, tall = picture.width() * scale, picture.height() * scale
+        draw_pixel_art(painter, QRectF(x - wide / 2, y - tall / 2, wide, tall), picture)
 
 
 def item_icon(item: str) -> QPixmap:
@@ -600,19 +612,14 @@ class DoorsItem(QGraphicsItem):
                 painter.setPen(QColor(colour))
                 number = box.adjusted(COUNT_SIZE + 1 + dx, dy, dx, dy)
                 painter.drawText(number, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, str(len(left)))
-        # A boss room's boss. Until the player has picked it, a skull with a question mark on the corner. With a
-        # wide red edge while the player's items do not beat it
+        # A boss room's boss. Until the player has picked it, a skull with a question mark on the corner
         half = BOSS_SIZE / 2
         for boss in self.bosses:
-            box = QRectF(boss.x - half, boss.y - half, BOSS_SIZE, BOSS_SIZE)
             shown = page.assets.boss(boss.boss) if boss.boss else page.assets.icon("Skull")
-            assert shown is not None  # the sheet has a skull
-            draw_pixel_art(painter, box, shown)
-            painter.setPen(QPen(QColor(OUTLINE), 1) if page.model.can_beat_boss(boss.tile) else QPen(QColor(BLOCKED), 2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(box)
+            beaten = page.model.can_beat_boss(boss.tile)
+            draw_plate(painter, boss.x, boss.y, BOSS_SIZE, PLATE if beaten else PLATE_BLOCKED, not beaten, shown)
             if not boss.boss:
-                corner = QRectF(box.right() - 6, box.top(), 6, 7)
+                corner = QRectF(boss.x + half - 6, boss.y - half, 6, 7)
                 font = QFont()
                 font.setPixelSize(7)
                 font.setBold(True)
@@ -621,20 +628,13 @@ class DoorsItem(QGraphicsItem):
                 for dx, dy, colour in ((0.5, 0.5, "black"), (-0.5, -0.5, "black"), (0.5, -0.5, "black"), (-0.5, 0.5, "black"), (0, 0, "white")):
                     painter.setPen(QColor(colour))
                     painter.drawText(corner.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, "?")
-        # A kill room's enemies, each on a plate
-        half = ENEMY_SIZE / 2
+        # A kill room's enemies
         for enemy in self.enemies:
-            clear = enemy.number not in page.model.unkilled(enemy.room)
-            painter.setPen(QPen(QColor(OUTLINE if clear else BLOCKED), 1))
-            painter.setBrush(QColor(ENEMY_PLATE_NA if enemy.kind == kill_rooms.NA else ENEMY_PLATE if clear else ENEMY_PLATE_BLOCKED))
-            painter.drawRect(QRectF(enemy.x - half, enemy.y - half, ENEMY_SIZE, ENEMY_SIZE))
+            killed = enemy.number not in page.model.unkilled(enemy.room)
             # Its picture, or a question mark until it is picked. Nothing for one that need not be killed
             shown = page.assets.enemy(enemy.picture) if enemy.picture else page.assets.icon(REACHABLE) if enemy.kind is None else None
-            if shown is not None:
-                # As big as fits inside the plate's edge, in the picture's own shape
-                scale = (ENEMY_SIZE - 2 * ENEMY_EDGE) / max(shown.width(), shown.height())
-                wide, tall = shown.width() * scale, shown.height() * scale
-                draw_pixel_art(painter, QRectF(enemy.x - wide / 2, enemy.y - tall / 2, wide, tall), shown)
+            fill = PLATE_NA if enemy.kind == kill_rooms.NA else PLATE if killed else PLATE_BLOCKED
+            draw_plate(painter, enemy.x, enemy.y, ENEMY_SIZE, fill, not killed, shown)
         for dot in self.dots:
             style = DOOR_STYLES[page.model.door_state(dot.door)]
             fill, edge, radius, outline = style.fill, style.edge, DOOR_RADIUS * style.scale, style.outline
