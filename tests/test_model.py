@@ -272,6 +272,19 @@ def test_a_hole_is_linked_only_to_where_a_hole_lands_and_nothing_else_is_linked_
     assert not as_they_were.can_link(hole, landing) and as_they_were.can_link(*stairs)
 
 
+def test_a_pit_that_is_two_holes_is_drawn_as_one_fall():
+    # The Freezors pit: a hole that is a door, and one off the ledge that lands in the same room
+    drop, hole = "Ice Freezors Hole", "Ice Freezors Ledge Hole"
+    model = new_model("Ice_Palace")
+    model.add_tile(DOORS[drop].tile, has_been_lit=True)
+    model.update()
+    assert {drop, hole} & {edge.a for edge in model.edges()} == {drop}
+    # The door's hole tracked as landing somewhere else: its drop is not drawn, so the other hole is
+    model.add_link(drop, "Ice Stalfos Hint Drop Entrance")
+    model.update()
+    assert hole in {edge.a for edge in model.edges()}
+
+
 def test_no_room_is_laid_out_on_an_entrances_marker():
     # Skull Woods as in the original game: the room south of the first lobby would join on under its entrance
     seed = seed_map.decode(a_rom(VANILLA, default_one_way_connections))

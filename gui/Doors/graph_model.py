@@ -665,14 +665,18 @@ class GraphModel:
 
     # ------------------------------------------------------- auto tracking entry
 
+    def unlinkable(self, door: str) -> bool:
+        """Whether the player does not link a door: a hole or where one lands, with holes landing where the
+        original game's do."""
+        return bool(self.settings.get("vanilla_drops")) and (door in MANUAL_DROPS or door in DROP_ENDS)
+
     def can_link(self, door: str, linked_door: str) -> bool:
         """Whether two doors can be linked by the player. A hole is linked only to where a hole lands, and nothing
-        else is linked to there. With holes landing where the original game's do, neither is linked at all."""
+        else is linked to there."""
         ends = {door, linked_door}
-        holes, landings = ends & set(MANUAL_DROPS), ends & DROP_ENDS
-        if self.settings.get("vanilla_drops"):
-            return not holes and not landings
-        return bool(holes) == bool(landings)
+        if any(self.unlinkable(end) for end in ends):
+            return False
+        return bool(ends & set(MANUAL_DROPS)) == bool(ends & DROP_ENDS)
 
     def auto_add_door_link(self, door: str | None, linked_door: str | None) -> bool:
         for d in [door, linked_door] if not self.decoupled() else [door]:
@@ -1390,9 +1394,12 @@ class GraphModel:
                 continue
             edges.append(Edge(a, b, EdgeKind.DROP))
         # Warps are never shuffled; unmarked holes follow vanilla_drops
+        drawn = {frozenset((edge.a, edge.b)) for edge in edges}
         for link in ROOM_LINKS:
             if link.kind is EdgeKind.HOLE and not self.settings.get("vanilla_drops"):
                 continue
+            if link.drop and frozenset((link.drop, MANUAL_DROPS[link.drop])) in drawn:
+                continue  # a drop is drawn between the same rooms
             na, nb = self.rooms.node(link.a), self.rooms.node(link.b)
             if na not in known or nb not in known or self.is_hidden_dark(na.tile) or self.is_hidden_dark(nb.tile):
                 continue

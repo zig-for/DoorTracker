@@ -87,6 +87,7 @@ class RoomLink:
     b: str
     kind: EdgeKind  # WARP or HOLE
     both_ways: bool
+    drop: str | None = None  # a hole that is a door and falls between the same rooms: drawn in place of this one
 
 
 def _read_doors() -> dict[str, Door]:
@@ -181,6 +182,8 @@ WARP_TILES = {
 PITS = {
     # The left of the room's two
     "Eastern Courtyard Potholes": (224, 128),
+    "Ice Freezors Ledge Hole": (184, 392),
+    "Ice Crystal Right Blue Hole": (384, 384),
     # The left of the room's two
     "Ice Backwards Room Hole": (336, 112),
 }
@@ -285,8 +288,9 @@ def _build_room_links() -> tuple[Mapping[str, Door], tuple[RoomLink, ...]]:
                     continue  # same supertile: see _build_parts
                 # Keyed by part: two warps can join the same pair of supertiles
                 found.setdefault((part_of(start), part_of(end), kind), (name, start, end))
-    # Falls as (from, to) rooms: the holes that are doors, which are drawn as drops, and the holes here
-    drops = {(part_of(DOORS[a]), part_of(DOORS[b])) for a, b in MANUAL_DROPS.items()}
+    # The holes that are doors, by the (from, to) rooms each falls between
+    drops = {(part_of(DOORS[a]), part_of(DOORS[b])): a for a, b in MANUAL_DROPS.items()}
+    # The (from, to) rooms of the holes here
     holes = {(ta, tb) for ta, tb, kind in found if kind is EdgeKind.HOLE}
 
     def led(start, end, falls):
@@ -302,9 +306,9 @@ def _build_room_links() -> tuple[Mapping[str, Door], tuple[RoomLink, ...]]:
 
     links = []
     for (ta, tb, kind), (name, start, end) in found.items():
-        if kind is EdgeKind.HOLE and led(ta, tb, drops | (holes - {(ta, tb)})):
+        if kind is EdgeKind.HOLE and led(ta, tb, holes - {(ta, tb)}):
             holes.remove((ta, tb))
-            continue  # the other falls lead there already
+            continue  # the other holes lead there already
         both_ways = (tb, ta, kind) in found
         if both_ways and (tb, ta) < (ta, tb):
             continue  # the reverse warp covers this pair
@@ -315,7 +319,7 @@ def _build_room_links() -> tuple[Mapping[str, Door], tuple[RoomLink, ...]]:
         elif kind is EdgeKind.HOLE:
             start, end = side(start, bottom=True), side(end, bottom=False)
         ports[a], ports[b] = start, end
-        links.append(RoomLink(a, b, kind, both_ways))
+        links.append(RoomLink(a, b, kind, both_ways, drops.get((ta, tb)) if kind is EdgeKind.HOLE else None))
     return MappingProxyType(ports), tuple(links)
 
 

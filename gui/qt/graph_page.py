@@ -1446,7 +1446,7 @@ class GraphPage(QWidget):
         if door in INTERIOR_DOORS or door in model.lobby_door_names():
             return
         if self.selected_door is None:
-            if model.has_target(door):
+            if model.has_target(door) or model.unlinkable(door):
                 return
             self._select(door)
             self.rebuild()
