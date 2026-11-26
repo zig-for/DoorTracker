@@ -13,7 +13,7 @@ import sni.sni_pb2 as sni_pb2
 import sni.sni_pb2_grpc as sni
 from data.doors_data import dark_tiles, door_coordinates, doors_data
 from gui.Doors import link_sprite, seed_map
-from gui.Doors.logic import DUNGEON_NUMBERS, ITEMS_AT, ITEMS_LENGTH
+from gui.Doors.logic import DUNGEON_NUMBERS, ITEMS_AT, ITEMS_LENGTH, SWAMP_PATCH_AT
 from gui.Doors.rooms import tile_of
 
 # After gui.Doors.logic, which makes the randomizer importable
@@ -51,6 +51,7 @@ check_addresses = {
     "prize": (SAVEDATA_START + 0x472, 0x2),
     "items": (SAVEDATA_START + ITEMS_AT, ITEMS_LENGTH),
     "dungeon": mem_addresses["dungeon"],  # which dungeon's keys the game is counting apart
+    "swamp_patch": (SWAMP_PATCH_AT, 0x1),  # whether the seed has moved the dam or the way in to the swamp's palace
 }
 READINGS_PER_CHECK_READ = 10
 

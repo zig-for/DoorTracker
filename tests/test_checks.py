@@ -326,6 +326,11 @@ def test_a_check_past_a_passage_is_blocked_until_the_item_for_the_passage_is_hel
     # The moat has water once the dam's lever is pulled
     model.set_items(frozenset({"Fighter Sword", "Flippers", "Open Floodgate"}))
     assert model.check_state(name) is CheckState.OPEN
+    # In a seed with the dam and the way in to the palace where they were, the randomizer asks for the mirror too
+    model.set_items(frozenset({"Fighter Sword", "Flippers", "Open Floodgate", "swamp in place"}))
+    assert model.check_state(name) is CheckState.BLOCKED
+    model.set_items(frozenset({"Fighter Sword", "Flippers", "Open Floodgate", "swamp in place", "Magic Mirror"}))
+    assert model.check_state(name) is CheckState.OPEN
 
 
 def test_a_check_the_map_does_not_lead_to_is_unrouted():

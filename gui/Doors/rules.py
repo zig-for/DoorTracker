@@ -14,9 +14,10 @@ read from Bosses.py, for a room's boss once the player has picked it (gui/Doors/
 A door that is only come in by, like the sanctuary's north door, has no rule in Rules.py: the randomizer has it as
 blocked, in Doors.py. It is kept here as a way out that nothing opens.
 
-Two settings can be told from the game: a standard seed is one where Zelda has not been delivered yet, and a
-swordless seed has its own mark where the sword is kept. The rules standard_rules and swordless_rules set are kept
-as holding in those seeds. The seed's logic is taken as no-glitches.
+Three settings can be told from the game: a standard seed is one where Zelda has not been delivered yet, a
+swordless seed has its own mark where the sword is kept, and the ROM says whether the dam or the way in to the
+swamp's palace is moved. The rules set for those seeds are kept as holding in them. The seed's logic is taken as
+no-glitches.
 """
 
 import ast
@@ -24,7 +25,7 @@ import types
 
 from data.doors_data import regions_to_doors
 from gui.Doors.checks import checks
-from gui.Doors.logic import BLUE, EITHER, HEARTS, OPEN_FLOODGATE, ORANGE, READABLE, SWORDLESS, ZELDA_DELIVERED, Rule, combine, enough_magic, negated
+from gui.Doors.logic import BLUE, EITHER, HEARTS, OPEN_FLOODGATE, ORANGE, READABLE, SWAMP_IN_PLACE, SWORDLESS, ZELDA_DELIVERED, Rule, combine, enough_magic, negated
 from gui.Doors.randomizer import doors_and_portals, dungeon_regions, syntax
 
 # After gui.Doors.randomizer, which makes the randomizer importable
@@ -43,7 +44,11 @@ FUNCTIONS: tuple[tuple[types.FunctionType, Rule], ...] = (
     (Rules.forbid_bomb_jump_requirements, True),  # set in no-glitches
     (Rules.standard_rules, ("not", ZELDA_DELIVERED)),
     (Rules.bomb_rules, True),
+    (Rules.set_rules, True),  # the rules it sets itself, after the others
 )
+# An "if" about a setting of the seed that is read from the game, as the randomizer writes it -> what holds in the
+# seeds that have it
+SETTINGS: dict[str, Rule] = {"world.swamp_patch_required[player]": ("not", SWAMP_IN_PLACE)}
 # Tests whose definition asks about the seed's settings: the item that stands for them
 TESTS_BY_HAND = {
     "can_use_bombs": "Bombs",  # needs the bomb bag where there is one: read as room for bombs
@@ -195,7 +200,16 @@ def spot(node: ast.AST, loop: dict[str, list[str]]) -> list[tuple[str, str]]:
     return [(kind, name) for name in names]
 
 
-def read_rules(reader: Reader) -> tuple[dict[tuple[str, str], Rule], dict[tuple[str, str], dict[Condition, Rule]]]:
+def told(test: ast.expr) -> Rule | None:
+    """What holds where an "if" about one of SETTINGS does, or where one that asks for the lack of it does. None
+    for any other "if"."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        setting = SETTINGS.get(ast.unparse(test.operand))
+        return None if setting is None else negated(setting)
+    return SETTINGS.get(ast.unparse(test))
+
+
+def read_rules(reader: Reader) ->tuple[dict[tuple[str, str], Rule], dict[tuple[str, str], dict[Condition, Rule]]]:
     """The rules the randomizer sets, by (kind, name): the rule set outright or in a loop over a list of names, and
     the rules set under an "if" the map can tell, by its condition."""
     found: dict[tuple[str, str], Rule] = {}
@@ -213,9 +227,13 @@ def read_rules(reader: Reader) -> tuple[dict[tuple[str, str], Rule], dict[tuple[
             names = lists.get(over.id, []) if isinstance(over, ast.Name) else [n for n in map(text, over.elts) if n] if isinstance(over, ast.List) else []
             for inner in node.body:
                 statement(inner, {node.target.id: names}, under, given)
-        elif isinstance(node, ast.If) and under is None and not node.orelse:
-            condition = reader.condition(node.test)
-            if condition is not None:
+        elif isinstance(node, ast.If) and not node.orelse:
+            setting = told(node.test)
+            condition = reader.condition(node.test) if under is None else None
+            if setting is not None:
+                for inner in node.body:
+                    statement(inner, loop, under, combine("all", [given, setting]))
+            elif condition is not None:
                 for inner in node.body:
                     statement(inner, loop, condition, given)
         elif isinstance(node, ast.Expr) and called(node.value) in ("set_rule", "add_rule"):
