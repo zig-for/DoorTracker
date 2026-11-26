@@ -923,9 +923,10 @@ class MainWindow(QMainWindow):
         if collected != self.collected:
             # This also puts back any check clicked on the map that the game does not agree with
             self._set_collected(collected)
-        held = items_held(memory["items"]) | events_held(memory["room"]), small_keys(memory["items"], memory["dungeon"][0])
+        items = items_held(memory["items"]) | events_held(memory["room"], self._held[0])
+        held = items, small_keys(memory["items"], memory["dungeon"][0])
         if held != self._held:
-            # This also puts back anything clicked in the items panel that the game does not agree with
+            # This also puts back any item clicked in the items panel that the game does not agree with
             self.set_held(*held)
 
     def drops_left(self, tile: rooms.Tile) -> list[Drop]:

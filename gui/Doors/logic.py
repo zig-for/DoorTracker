@@ -24,7 +24,8 @@ ITEMS_LENGTH = PROGRESS_AT + 1 - ITEMS_AT
 # then on, and a seed that is not standard starts with it there (init_open_mode_sram in Rom.py)
 ZELDA_DELIVERED = "Zelda Delivered"
 # Not an item: the randomizer's name for the dam's lever having been pulled. The game marks it in the save data of
-# the room the swamp's palace is come in by, as the water in that room
+# the room the swamp's palace is come in by, as the water in that room, and takes the mark away again when the
+# player walks to another screen outside
 OPEN_FLOODGATE = "Open Floodgate"
 FLOODGATE_AT, FLOODGATE_BIT = 0x051, 0x01
 
@@ -125,9 +126,10 @@ def items_held(save: bytes) -> frozenset[str]:
     return with_hearts(frozenset(held), at(HEALTH_AT) // 8)
 
 
-def events_held(rooms: bytes) -> frozenset[str]:
-    """What has been done that the randomizer counts as held, from the rooms' save data."""
-    return frozenset({OPEN_FLOODGATE}) if rooms[FLOODGATE_AT] & FLOODGATE_BIT else frozenset()
+def events_held(rooms: bytes, before: frozenset[str]) -> frozenset[str]:
+    """What has been done that the randomizer counts as held from then on: read from the rooms' save data, or held
+    before."""
+    return frozenset({OPEN_FLOODGATE}) if rooms[FLOODGATE_AT] & FLOODGATE_BIT or OPEN_FLOODGATE in before else frozenset()
 
 
 def small_keys(save: bytes, dungeon: int) -> dict[str, int]:

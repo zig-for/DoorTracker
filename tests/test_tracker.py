@@ -252,11 +252,26 @@ def test_the_items_the_game_holds_reach_every_tab(window, app, monkeypatch):
     in_game = reading(tile, door["x"], door["y"])
     assert window.pages[TAB].model.items == STARTING_ITEMS
 
-    # The hammer, and the mitts, which also lift what the glove lifts. And the water in the room the swamp's palace
-    # is come in by, which is there once the dam's lever is pulled
-    play(window, app, monkeypatch, [("one", in_game), ("two", in_game)], equipment={0x34B: 1, 0x354: 2}, collected=[("room", 0x28, 0x100)])
+    # The hammer, and the mitts, which also lift what the glove lifts
+    play(window, app, monkeypatch, [("one", in_game), ("two", in_game)], equipment={0x34B: 1, 0x354: 2})
     for page in window.pages.values():
-        assert page.model.items == {"Hammer", "Power Glove", "Titans Mitts", "Open Floodgate"}
+        assert page.model.items == {"Hammer", "Power Glove", "Titans Mitts"}
+
+
+def test_the_floodgate_stays_open_once_the_game_has_had_it_open(window, app, monkeypatch):
+    tile, door = door_facing("No")
+    steps = [("one", reading(tile, door["x"], door["y"])), ("two", reading(tile, door["x"], door["y"]))]
+    model = window.pages[TAB].model
+    # The water in the room the swamp's palace is come in by, which is there once the dam's lever is pulled
+    play(window, app, monkeypatch, steps, collected=[("room", 0x28, 0x100)])
+    assert "Open Floodgate" in model.items
+    # The game takes the water away when the player walks on outside. The randomizer has the lever as pulled still
+    play(window, app, monkeypatch, steps)
+    assert "Open Floodgate" in model.items
+    # Taken back in the items panel, it is not held until the game has it open again
+    window.set_held(model.items - {"Open Floodgate"}, {})
+    play(window, app, monkeypatch, steps)
+    assert "Open Floodgate" not in model.items
 
 
 def test_items_are_read_with_the_menu_up_and_not_with_no_file_loaded(window, app, monkeypatch):
