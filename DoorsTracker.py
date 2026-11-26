@@ -41,7 +41,7 @@ from gui.Doors.bosses import BOSSES
 from gui.Doors.checks import DROPS, Drop, checks
 from gui.Doors.kill_rooms import NA, PICKS
 from gui.Doors.layout import REPEL_RANGE
-from gui.Doors.logic import COMPASSES, MAPS, STARTING_ITEMS, items_held, small_keys
+from gui.Doors.logic import COMPASSES, MAPS, STARTING_ITEMS, events_held, items_held, small_keys
 from gui.qt.graph_page import Assets, GraphPage
 
 WINDOW_SIZES = {"small": (1064, 632), "medium": (1588, 888), "large": (2088, 1144)}
@@ -923,7 +923,7 @@ class MainWindow(QMainWindow):
         if collected != self.collected:
             # This also puts back any check clicked on the map that the game does not agree with
             self._set_collected(collected)
-        held = items_held(memory["items"]), small_keys(memory["items"], memory["dungeon"][0])
+        held = items_held(memory["items"]) | events_held(memory["room"]), small_keys(memory["items"], memory["dungeon"][0])
         if held != self._held:
             # This also puts back anything clicked in the items panel that the game does not agree with
             self.set_held(*held)

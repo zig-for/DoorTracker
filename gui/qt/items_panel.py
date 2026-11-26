@@ -9,7 +9,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import QAbstractButton, QGridLayout, QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget
 
-from gui.Doors.logic import BIG_KEYS, BOTTLES, FIRST_HEARTS, HEARTS, MAGIC_BARS, STARTING_ITEMS, hearts_held, with_hearts
+from gui.Doors.logic import BIG_KEYS, BOTTLES, FIRST_HEARTS, HEARTS, MAGIC_BARS, OPEN_FLOODGATE, STARTING_ITEMS, hearts_held, with_hearts
 from gui.Doors.randomizer import FOLDER
 
 PICTURES = FOLDER / "data" / "itemgfx"  # the randomizer's own, 32 pixels high
@@ -31,6 +31,7 @@ PICTURE_NAMES = {
     "Magic Upgrade (1/2)": "Half Magic",
     "Magic Upgrade (1/4)": "Quarter Magic",
     **dict.fromkeys(BOTTLES, "Bottle"),
+    OPEN_FLOODGATE: "Whirlpool",
 }
 BIG_KEY_PICTURE = "Big Key"
 
@@ -64,6 +65,7 @@ EQUIPMENT = [
     Slot(("Blue Mail", "Red Mail"), start="Green Mail"),
 ]
 SLOTS = [slot for row in (*MENU, ABILITIES, EQUIPMENT, UPGRADES) for slot in row]
+FLOODGATE = one(OPEN_FLOODGATE)  # not an item: under the upgrades
 SWORDS = EQUIPMENT[0].items  # each one's picture has its level on it, 1 to 4
 NUMBER_FROM = 18  # that number is right of this and below it, in a picture 32 across
 NUMBER_EDGE = 2  # how far the edge put round it reaches: one of the picture's own pixels, which are doubled
@@ -301,6 +303,7 @@ class ItemsPanel(QWidget):
         for place, slots in enumerate((ABILITIES, EQUIPMENT, UPGRADES)):
             for row, slot in enumerate(slots):
                 grid.addWidget(cell(slot), row, len(MENU[0]) + place)
+        grid.addWidget(cell(FLOODGATE), len(UPGRADES), len(MENU[0]) + 2)
         # Under the equipment: how many hearts
         self.hearts = Cell(self._pressed, "hearts")
         self.hearts.setFixedSize(CELL, CELL)

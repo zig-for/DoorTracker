@@ -140,6 +140,12 @@ def test_clicking_in_the_panel_sets_what_is_held_in_every_tab(window, app):
     QTest.mouseClick(shown["Hammer"], right)
     assert other.model.items == STARTING_ITEMS | {"Big Key (Thieves Town)"}
 
+    # Not an item, and it has a cell all the same
+    QTest.mouseClick(shown["Open Floodgate"], left)
+    assert other.model.items == STARTING_ITEMS | {"Big Key (Thieves Town)", "Open Floodgate"}
+    QTest.mouseClick(shown["Open Floodgate"], right)
+    assert other.model.items == STARTING_ITEMS | {"Big Key (Thieves Town)"}
+
     # Hearts go up from the three the game starts with, and not back below them
     QTest.mouseClick(panel.hearts, left)
     assert hearts_held(other.model.items) == 4 and other.items_panel.hearts.toolTip() == "4 hearts"

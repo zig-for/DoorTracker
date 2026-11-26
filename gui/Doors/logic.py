@@ -23,6 +23,10 @@ ITEMS_LENGTH = PROGRESS_AT + 1 - ITEMS_AT
 # Not an item: the randomizer's name for Zelda having been brought to the sanctuary. The game's progress is 2 from
 # then on, and a seed that is not standard starts with it there (init_open_mode_sram in Rom.py)
 ZELDA_DELIVERED = "Zelda Delivered"
+# Not an item: the randomizer's name for the dam's lever having been pulled. The game marks it in the save data of
+# the room the swamp's palace is come in by, as the water in that room
+OPEN_FLOODGATE = "Open Floodgate"
+FLOODGATE_AT, FLOODGATE_BIT = 0x051, 0x01
 
 # What the randomizer gives a starting item by: item -> (address in save data, value) for an item with a slot of
 # its own, item -> (address, bit) for the big keys among others, and small key -> the addresses its count is kept
@@ -84,6 +88,7 @@ BOTTLES = ["Bottle", "2 Bottles", "3 Bottles", "4 Bottles"]
 READABLE = frozenset(AT_LEAST) | frozenset(BITS) | frozenset(BOTTLES)
 SWORD = 0x359
 NO_SWORDS = 0xFF  # what a swordless seed puts in the sword's byte
+SWORDLESS = "swordless"  # not an item: held in a seed with that for its swords
 HEALTH_AT = 0x36C  # the most health the player can have, in eighths of a heart
 # Hearts are held as these, one for each the player has, so a rule that asks for four asks for the fourth
 HEARTS = [f"{count} Hearts" for count in range(1, 21)]
@@ -115,7 +120,14 @@ def items_held(save: bytes) -> frozenset[str]:
     held |= set(BOTTLES[: sum(1 for address in BOTTLES_AT if at(address))])
     if at(PROGRESS_AT) >= 2:
         held.add(ZELDA_DELIVERED)
+    if save[SWORD - ITEMS_AT] == NO_SWORDS:
+        held.add(SWORDLESS)
     return with_hearts(frozenset(held), at(HEALTH_AT) // 8)
+
+
+def events_held(rooms: bytes) -> frozenset[str]:
+    """What has been done that the randomizer counts as held, from the rooms' save data."""
+    return frozenset({OPEN_FLOODGATE}) if rooms[FLOODGATE_AT] & FLOODGATE_BIT else frozenset()
 
 
 def small_keys(save: bytes, dungeon: int) -> dict[str, int]:
@@ -170,6 +182,12 @@ def combine(kind: str, parts: list[Rule]) -> Rule:
     if not kept:
         return empty
     return kept[0] if len(kept) == 1 else (kind, *kept)
+
+
+def negated(rule: Rule) -> Rule:
+    if isinstance(rule, bool):
+        return not rule
+    return rule[1] if isinstance(rule, tuple) and rule[0] == "not" else ("not", rule)
 
 
 def enough_magic(needed: int) -> Rule:

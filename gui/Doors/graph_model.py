@@ -1779,7 +1779,7 @@ class GraphModel:
         """Way out -> what going out by it takes for what the seed has made of it: the randomizer's rules that
         depend on the seed, where the map says they hold, and what the door's mark takes. A door marked as a trap
         door is no way out, but for the ones that are one in the randomizer."""
-        found = {way: combine("all", [rule for condition, rule in rules if self._seed_has(condition)]) for way, rules in seeded_rules.items()}
+        found = {way: combine("all", [rule for condition, rule in rules.items() if self._seed_has(condition)]) for way, rules in seeded_rules.items()}
         for door, icon in self.special_doors.items():
             if icon in DOOR_KINDS:
                 rule = door_kind_rules[DOOR_KINDS[icon]]

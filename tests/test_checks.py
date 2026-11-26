@@ -7,9 +7,9 @@ from data.doors_data import regions_to_doors
 from data.doors_sprite_data import REACHABLE
 from gui.Doors.checks import checks
 from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState, DoorState
-from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, ORANGE, READABLE, holds, items_held, with_hearts
+from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, NO_SWORDS, ORANGE, READABLE, SWORD, holds, items_held, with_hearts
 from gui.Doors.rooms import DOORS, SPLIT, Node
-from gui.Doors.rules import check_regions, check_rules, passage_rules
+from gui.Doors.rules import check_regions, check_rules, passage_rules, seeded_rules
 from gui.qt.style import BLOCKED, DOOR_OPEN
 from support import At, model_leading_to, new_model
 
@@ -51,7 +51,7 @@ def test_items_are_read_from_the_save_data():
     equipment = {0x34B: 1, 0x354: 2, 0x359: 0xFF, 0x35A: 2, 0x38C: 0x40, 0x35D: 3, 0x370: 10, 0x36C: 0x28, 0x366: 0x18}
     for address, value in equipment.items():
         save[address - ITEMS_AT] = value
-    held = {"Hammer", "Power Glove", "Titans Mitts", "Blue Shield", "Red Shield", "Red Boomerang", "Bottle", "Bombs"}
+    held = {"Hammer", "Power Glove", "Titans Mitts", "swordless", "Blue Shield", "Red Shield", "Red Boomerang", "Bottle", "Bombs"}
     assert items_held(bytes(save)) == held | {"Big Key (Thieves Town)", "Big Key (Turtle Rock)"} | set(HEARTS[:5])
     # The game's progress, at what it is once Zelda is in the sanctuary
     save[0x3C5 - ITEMS_AT] = 2
@@ -217,6 +217,30 @@ def test_the_way_past_ganons_towers_middle_boss_takes_the_cape_when_it_is_trinex
     assert model.door_state(past) is DoorState.OPEN
 
 
+def test_a_swordless_seed_takes_its_own_rules():
+    save = bytearray(ITEMS_LENGTH)
+    assert not holds(passage_rules["Tower Altar NW"], items_held(bytes(save)))
+    assert not holds(check_rules["Ice Palace - Freezor Chest"], items_held(bytes(save)) | {"Bombos"})
+    save[SWORD - ITEMS_AT] = NO_SWORDS
+    assert holds(passage_rules["Tower Altar NW"], items_held(bytes(save)))
+    assert holds(check_rules["Ice Palace - Freezor Chest"], items_held(bytes(save)) | {"Bombos"})
+    # Its rule for a door the seed has made a trap door is in place of the usual one too
+    assert holds(seeded_rules["Ice Lobby SE"]["trapped", "Ice Lobby SE"], items_held(bytes(save)) | {"Bombos"})
+    assert not holds(seeded_rules["Ice Lobby SE"]["trapped", "Ice Lobby SE"], frozenset({"Bombos"}))
+
+
+def test_the_chests_past_the_gap_in_the_dms_room_take_the_hookshot():
+    # Without glitches: the randomizer has a bomb jump for the others
+    rule = check_rules["Ganons Tower - DMs Room - Top Left"]
+    assert not holds(rule, frozenset(READABLE - {"Hookshot"})) and holds(rule, frozenset({"Hookshot"}))
+
+
+def test_the_pits_in_skull_woods_take_the_star_tile_stepped_on():
+    # The randomizer keeps the rule under a name before it sets it
+    assert passage_rules["Skull 2 West Lobby Ledge Pits"] == "Hidden Pits"
+    assert passage_rules["Skull 2 West Lobby Pits"] == ("any", "Pegasus Boots", "Hidden Pits")
+
+
 def test_the_chests_in_the_two_cells_take_the_big_key():
     cells = (
         ("Thieves' Town - Blind's Cell", "Thieves_Town", "Thieves Blind's Cell WS", "Big Key (Thieves Town)"),
@@ -298,6 +322,9 @@ def test_a_check_past_a_passage_is_blocked_until_the_item_for_the_passage_is_hel
     model.set_items(frozenset({"Fighter Sword"}))
     assert model.check_state(name) is CheckState.BLOCKED
     model.set_items(frozenset({"Fighter Sword", "Flippers"}))
+    assert model.check_state(name) is CheckState.BLOCKED
+    # The moat has water once the dam's lever is pulled
+    model.set_items(frozenset({"Fighter Sword", "Flippers", "Open Floodgate"}))
     assert model.check_state(name) is CheckState.OPEN
 
 
