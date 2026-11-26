@@ -31,8 +31,19 @@ from gui.Doors.bosses import BOSS_ROOMS, beating
 from gui.Doors.checks import BIG_KEY_DROPS, Drop, checks
 from gui.Doors.kill_rooms import KILL_CHECKS, KILL_ROOMS, NA, ROOMS_BY_TILE, clearing
 from gui.Doors.layout import LINK_GAP, REPEL_RANGE, enclosing_circle
-from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, STARTING_ITEMS, Rule, holds
-from gui.Doors.rules import big_key_passages, check_regions, check_rules, crystals, events, passage_rules
+from gui.Doors.logic import BIG_KEYS, EITHER, ORANGE, STARTING_ITEMS, Rule, combine, holds
+from gui.Doors.rules import (
+    Condition,
+    big_key_passages,
+    check_regions,
+    check_rules,
+    crystals,
+    door_kind_rules,
+    events,
+    open_trap_doors,
+    passage_rules,
+    seeded_rules,
+)
 from gui.Doors.rooms import (
     DEFAULT_DOORS,
     DOORS,
@@ -59,6 +70,7 @@ from gui.Doors.rooms import (
 
 # Geometry, in world units (canvas pixels at zoom 1.0)
 EVENTS = frozenset(events)  # what a rule can ask for that is done somewhere, not picked up
+DOOR_KINDS = {"Bomb Door": "Bombable", "Dash Door": "Dashable"}  # a door's mark -> the randomizer's kind of door
 CHECKS_BY_TILE: dict[Tile, list[str]] = defaultdict(list)
 for _name, _check in checks.items():
     CHECKS_BY_TILE[_check["tile"]].append(_name)
@@ -1016,6 +1028,7 @@ class GraphModel:
         big_key = BIG_KEYS[self.dungeon_name]
         # Way out of a kill room -> what killing its enemies takes
         killed = {way: self.kill_rule(room) for way, room in self._kill_ways().items()}
+        seeded = self._seeded_rules()
 
         def arrive(name: str, down: int) -> None:
             for region in regions_at(name):
@@ -1037,6 +1050,7 @@ class GraphModel:
                     barrier = crystals.get(way_out, 0)
                     rules = (
                         passage_rules.get(way_out, True),
+                        seeded.get(way_out, True),
                         beaten.get(way_out, True),
                         killed.get(way_out, True),
                         big_key if way_out in locked else True,
@@ -1747,11 +1761,40 @@ class GraphModel:
         need not be killed."""
         return clearing(room, tuple(kind or NA for kind in self.enemy_kinds(room)))
 
+    def _ways_in(self) -> set[str]:
+        """The doors the seed has made ways in to the dungeon, as the map has them."""
+        return {lobby.door for lobby in self.lobby_doors if lobby.lobby != REACHABLE}
+
+    def _seed_has(self, condition: Condition) -> bool:
+        """Whether the seed is one a rule that depends on it holds in, as the map has it."""
+        kind, *asked = condition
+        if kind == "trapped":
+            return self.special_doors.get(asked[0]) == "Trap Door"
+        if kind == "not entrance":
+            return asked[0] not in self._ways_in()
+        region, boss = asked
+        return any(self.bosses.get(DOORS[door].tile) == boss for door in regions_to_doors[region] if door in DOORS)
+
+    def _seeded_rules(self) -> dict[str, Rule]:
+        """Way out -> what going out by it takes for what the seed has made of it: the randomizer's rules that
+        depend on the seed, where the map says they hold, and what the door's mark takes. A door marked as a trap
+        door is no way out, but for the ones that are one in the randomizer."""
+        found = {way: combine("all", [rule for condition, rule in rules if self._seed_has(condition)]) for way, rules in seeded_rules.items()}
+        for door, icon in self.special_doors.items():
+            if icon in DOOR_KINDS:
+                rule = door_kind_rules[DOOR_KINDS[icon]]
+            elif icon == "Trap Door" and door not in open_trap_doors:
+                rule = False
+            else:
+                continue
+            found[door] = combine("all", [found.get(door, True), rule])
+        return found
+
     def _kill_ways(self) -> dict[str, str]:
         """Way out of a kill room that takes killing its enemies -> the room. Some of a room's doors take it only
         as trap doors, which a seed can make them: those once they are marked as one. A door the seed has made a
         way in to the dungeon takes none, as challenge_room_rules in Rules.py has it."""
-        ways_in = {lobby.door for lobby in self.lobby_doors if lobby.lobby != REACHABLE}
+        ways_in = self._ways_in()
         found = {}
         for name, room in KILL_ROOMS.items():
             traps = [way for way in room.trap_ways if self.special_doors.get(way) == "Trap Door"]

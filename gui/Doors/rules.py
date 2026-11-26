@@ -5,10 +5,12 @@ CollectionState in BaseClasses.py defines the tests they use, like can_lift_rock
 written and not run. The randomizer only has rules once it has generated a whole seed, and by then one that holds
 in every seed looks the same as one that depends on that seed's settings.
 
-Only what holds in every seed is kept. A rule set under an "if" depends on the seed, and so do key doors and dark
-rooms; and the tracker cannot read events like "Open Floodgate". All of those count as met, so a rule here never
-asks for more than the randomizer does. Which boss is in a boss room depends on the seed too: what beating each
-takes is read from Bosses.py, for the room's boss once the player has picked it (gui/Doors/bosses.py).
+What holds in every seed is kept as it is. A rule set under an "if" depends on the seed. Where the map can say
+whether the "if" holds, the rule is kept with it: a door the seed has made a trap door, one it has not made a way
+in to the dungeon, and a room's boss. The others count as met, and so do key doors and dark rooms and events the
+tracker cannot read like "Open Floodgate", so a rule here never asks for more than the randomizer does. What
+beating each boss takes is read from Bosses.py, for a room's boss once the player has picked it
+(gui/Doors/bosses.py).
 
 One setting can be told from the game: a standard seed is one where Zelda has not been delivered yet. The rules
 standard_rules sets are kept as holding until she is.
@@ -19,12 +21,13 @@ import ast
 from data.doors_data import regions_to_doors
 from gui.Doors.checks import checks
 from gui.Doors.logic import BLUE, EITHER, HEARTS, ORANGE, READABLE, ZELDA_DELIVERED, Rule, combine, enough_magic
-from gui.Doors.randomizer import dungeon_regions, syntax
+from gui.Doors.randomizer import doors_and_portals, dungeon_regions, syntax
 
 # After gui.Doors.randomizer, which makes the randomizer importable
 from ALttPDoorRandomizer import Doors, Rules  # noqa: E402
 from ALttPDoorRandomizer.BaseClasses import CollectionState  # noqa: E402
 from ALttPDoorRandomizer.Bosses import boss_table  # noqa: E402
+from ALttPDoorRandomizer.DoorShuffle import trap_door_exceptions  # noqa: E402
 from ALttPDoorRandomizer.DungeonGenerator import special_big_key_doors  # noqa: E402
 from ALttPDoorRandomizer.Regions import location_events  # noqa: E402  location -> the event it gives
 
@@ -38,6 +41,10 @@ TESTS_BY_HAND = {
 }
 # Tests of a region, not of what is held: the crystal barriers that are down when it is reached
 COLOURS = {"can_reach_blue": BLUE, "can_reach_orange": ORANGE}
+# What a rule can be set under that the map can tell: ("trapped", door) for a door the seed has made a trap door,
+# ("not entrance", door) for one it has not made a way in to the dungeon, and ("boss", region, boss) for the boss
+# of the boss room a region is in
+Condition = tuple[str, ...]
 
 
 def called(node: ast.AST) -> str | None:
@@ -122,6 +129,29 @@ class Reader:
             return self.test(name)
         return True
 
+    def condition(self, test: ast.expr) -> Condition | None:
+        """What an "if" in Rules.py asks of the seed, or None where the map cannot tell."""
+        if called(test) == "is_trapped" and isinstance(test, ast.Call):
+            door = text(test.args[0])
+            return ("trapped", door) if door else None
+        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            asked = test.operand
+            door = door_of(asked.value) if isinstance(asked, ast.Attribute) and asked.attr == "entranceFlag" else None
+            return ("not entrance", door) if door else None
+        if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq):
+            # world.get_region(region, player).dungeon.bosses[level].name == boss. Ganon's Tower is the dungeon
+            # with a boss on each level, and there the region asked by is the boss's own room
+            boss = text(test.comparators[0])
+            asked = test.left
+            if isinstance(asked, ast.Attribute) and asked.attr == "name" and isinstance(asked.value, ast.Subscript):
+                bosses = asked.value.value
+                if isinstance(bosses, ast.Attribute) and bosses.attr == "bosses" and isinstance(bosses.value, ast.Attribute):
+                    region = bosses.value.value
+                    name = text(region.args[0]) if isinstance(region, ast.Call) and called(region) == "get_region" else None
+                    if boss is not None and boss in boss_table and name is not None and name in self.regions:
+                        return ("boss", name, boss)
+        return None
+
     def function(self, statements: list[ast.stmt]) -> Rule:
         """A rule written as a function's body: a returned expression, after any number of "if not this: return
         False" and "if this: return True"."""
@@ -147,34 +177,48 @@ def spot(node: ast.AST, loop: dict[str, list[str]]) -> list[tuple[str, str]]:
     return [(kind, name) for name in names]
 
 
-def read_rules(reader: Reader, functions: tuple) -> dict[tuple[str, str], Rule]:
-    """(kind, name) -> rule, for every rule these functions of the randomizer set outright or in a loop over a list
-    of names."""
+def read_rules(reader: Reader, functions: tuple) -> tuple[dict[tuple[str, str], Rule], dict[tuple[str, str], list[tuple[Condition, Rule]]]]:
+    """The rules these functions of the randomizer set, by (kind, name): the rule set outright or in a loop over a
+    list of names, and the rules set under an "if" the map can tell, each with its condition."""
     found: dict[tuple[str, str], Rule] = {}
+    sometimes: dict[tuple[str, str], list[tuple[Condition, Rule]]] = {}
+    in_place: set[tuple[str, str]] = set()  # the ones a set_rule under an "if" is for
     lists: dict[str, list[str]] = {}
 
-    def statement(node: ast.stmt, loop: dict[str, list[str]]) -> None:
+    def statement(node: ast.stmt, loop: dict[str, list[str]], under: Condition | None) -> None:
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.List) and isinstance(node.targets[0], ast.Name):
             lists[node.targets[0].id] = [name for name in map(text, node.value.elts) if name]
         elif isinstance(node, ast.For) and isinstance(node.target, ast.Name):
             over = node.iter
             names = lists.get(over.id, []) if isinstance(over, ast.Name) else [n for n in map(text, over.elts) if n] if isinstance(over, ast.List) else []
             for inner in node.body:
-                statement(inner, {node.target.id: names})
+                statement(inner, {node.target.id: names}, under)
+        elif isinstance(node, ast.If) and under is None and not node.orelse:
+            condition = reader.condition(node.test)
+            if condition is not None:
+                for inner in node.body:
+                    statement(inner, loop, condition)
         elif isinstance(node, ast.Expr) and called(node.value) in ("set_rule", "add_rule"):
             assert isinstance(node.value, ast.Call)
             for key in spot(node.value.args[0], loop):
                 rule = reader.rule(node.value.args[1])
-                found[key] = rule if called(node.value) == "set_rule" else combine("all", [found.get(key, True), rule])
+                if under is not None:
+                    sometimes.setdefault(key, []).append((under, rule))
+                    if called(node.value) == "set_rule":
+                        in_place.add(key)
+                else:
+                    found[key] = rule if called(node.value) == "set_rule" else combine("all", [found.get(key, True), rule])
 
     for function in functions:
         for node in syntax(function).body:
-            statement(node, {})
-    return found
+            statement(node, {}, None)
+    # A rule under an "if" is kept as adding to the one set outright. None is set in place of one
+    assert not in_place & set(found), in_place & set(found)
+    return found, sometimes
 
 
-def read() -> tuple[dict[str, Rule], dict[str, Rule], dict[str, str], dict[str, tuple[str, Rule]]]:
-    """(passage rules, check rules, each check's region, events)."""
+def read() -> tuple[dict[str, Rule], dict[str, list[tuple[Condition, Rule]]], dict[str, Rule], dict[str, str], dict[str, tuple[str, Rule]]]:
+    """(passage rules, the passage rules that depend on the seed, check rules, each check's region, events)."""
     # Each location in a dungeon -> its region
     where = {location.name: region.name for region in dungeon_regions() for location in region.locations}
 
@@ -187,17 +231,22 @@ def read() -> tuple[dict[str, Rule], dict[str, Rule], dict[str, str], dict[str, 
     del done_at[ZELDA_DELIVERED]
 
     reader = Reader({*done_at, ZELDA_DELIVERED})
-    found = read_rules(reader, FUNCTIONS)
+    found, sometimes = read_rules(reader, FUNCTIONS)
     # A standard seed's rules hold until Zelda is delivered, and a seed that is not standard starts with her
     # delivered. Among them: the way behind the throne room's tapestry takes having her along
-    for key, rule in read_rules(reader, (Rules.standard_rules,)).items():
+    standard, standard_sometimes = read_rules(reader, (Rules.standard_rules,))
+    assert not standard_sometimes
+    for key, rule in standard.items():
         found[key] = combine("all", [found.get(key, True), combine("any", [ZELDA_DELIVERED, rule])])
     walked = {name for names in regions_to_doors.values() for name in names}
     passages = {name: rule for (kind, name), rule in found.items() if kind == "get_entrance" and name in walked and rule is not True}
+    # Every rule that depends on the seed is a passage's
+    assert all(kind == "get_entrance" and name in walked for kind, name in sometimes)
+    seeded = {name: rules for (_kind, name), rules in sometimes.items()}
     of_checks = {name: rule for (kind, name), rule in found.items() if kind == "get_location" and name in checks and rule is not True}
     regions = {name: where[name] for name in checks}
     happen = {event: (where[location], found.get(("get_location", location), True)) for event, location in done_at.items()}
-    return passages, of_checks, regions, happen
+    return passages, seeded, of_checks, regions, happen
 
 
 def door_of(node: ast.expr) -> str | None:
@@ -232,6 +281,23 @@ def read_crystals() -> dict[str, int]:
     return found
 
 
+def read_door_kinds() -> dict[str, Rule]:
+    """Kind of door a seed can make a door, by DoorKind's name for it -> what going through one takes: as bomb_rules
+    sets it on every door of that kind, in a seed with doors shuffled."""
+    reader = Reader(set())
+    found = {}
+    for node in ast.walk(syntax(Rules.bomb_rules)):
+        # if door.kind(world) in [DoorKind.Dashable]: add_rule(door.entrance, rule)
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and called(node.test.left) == "kind":
+            (kinds,) = node.test.comparators
+            first = node.body[0]
+            assert isinstance(kinds, ast.List) and isinstance(first, ast.Expr) and isinstance(first.value, ast.Call)
+            for kind in kinds.elts:
+                assert isinstance(kind, ast.Attribute)
+                found[kind.attr] = reader.rule(first.value.args[1])
+    return found
+
+
 def read_bosses() -> dict[str, tuple[Rule, Rule]]:
     """Boss -> what beating it takes, and what it takes on an icy floor."""
     reader = Reader(set())
@@ -243,10 +309,15 @@ def read_bosses() -> dict[str, tuple[Rule, Rule]]:
     return {boss: (rule(usual), rule(on_ice)) for boss, (_name, usual, on_ice) in boss_table.items()}
 
 
-# What leaving a region through a door or passage takes; what collecting a check takes, once in its region; the
-# region each check is in; and event -> (the region it is done in, what doing it takes)
-passage_rules, check_rules, check_regions, events = read()
+# What leaving a region through a door or passage takes; what it takes besides for what a seed can make of it, as
+# [(condition, rule)]; what collecting a check takes, once in its region; the region each check is in; and
+# event -> (the region it is done in, what doing it takes)
+passage_rules, seeded_rules, check_rules, check_regions, events = read()
 crystals = read_crystals()
+door_kind_rules = read_door_kinds()
+# A trap door is no way out, but for these, which are one with whatever their rules take: the ones the randomizer
+# keeps as a way out when a seed makes them trap doors, and the original game's trap doors that are a way out
+open_trap_doors = frozenset(trap_door_exceptions) | {door.name for door in doors_and_portals()[0] if door.trapFlag and not door.blocked}
 boss_rules = read_bosses()
 # The passages that take the big key of the dungeon they are in, in every seed: into Zelda's cell and into Blind's.
 # The randomizer gives them the rule with a seed's big key doors, which is why Rules.py does not set it

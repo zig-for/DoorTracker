@@ -110,6 +110,91 @@ def test_a_check_past_a_door_marked_as_a_big_key_door_is_blocked_until_the_big_k
     assert model.check_state(name) is CheckState.OPEN
 
 
+def test_the_switch_rooms_door_takes_the_cane_or_the_block_dropped_from_above():
+    door = "Ice Switch Room SE"
+    model = new_model("Ice_Palace")
+    for name in (door, "Ice Crystal Right ES", "Ice Refill WS"):
+        model.add_tile(DOORS[name].tile, has_been_lit=True)
+    model.add_lobby_door("Ice Switch Room ES", "Ice_Palace")
+    model.update()
+    model.set_items(frozenset())
+    assert model.door_state(door) is DoorState.BLOCKED
+    model.set_items(frozenset({"Cane of Somaria"}))
+    assert model.door_state(door) is DoorState.OPEN
+    # A way to the room the block is pushed down from, which is behind its blue barrier, and on to a crystal switch
+    # with something to hit it
+    model.set_items(frozenset({"Hookshot"}))
+    model.add_lobby_door("Ice Crystal Right ES", "Ice_Palace_2")
+    model.update()
+    assert model.door_state(door) is DoorState.BLOCKED
+    model.add_link("Ice Crystal Left WS", "Ice Refill WS")
+    assert model.door_state(door) is DoorState.OPEN
+
+
+def test_a_door_marked_as_a_trap_door_takes_what_the_randomizer_has_for_it_as_one():
+    door = "Ice Switch Room ES"
+    model = new_model("Ice_Palace")
+    model.add_tile(DOORS[door].tile, has_been_lit=True)
+    model.add_lobby_door("Ice Switch Room SE", "Ice_Palace")
+    model.update()
+    model.set_items(frozenset())
+    assert model.door_state(door) is DoorState.OPEN
+    model.annotate(door, "Trap Door", [])
+    assert model.door_state(door) is DoorState.BLOCKED
+    model.set_items(frozenset({"Cane of Somaria"}))
+    assert model.door_state(door) is DoorState.OPEN
+
+
+def test_a_door_marked_as_a_trap_door_is_no_way_out_unless_it_is_one_in_the_randomizer():
+    model = new_model("Eastern_Palace")
+    model.add_tile(DOORS["Eastern Cannonball N"].tile, has_been_lit=True)
+    model.add_lobby_door("Eastern Cannonball S", "Eastern_Palace")
+    model.update()
+    model.set_items(frozenset(READABLE))
+    model.annotate("Eastern Cannonball N", "Trap Door", [])
+    assert model.door_state("Eastern Cannonball N") is DoorState.BLOCKED
+    # One of the original game's trap doors, which opens
+    model = new_model("Eastern_Palace")
+    model.add_tile(DOORS["Eastern Lobby Bridge N"].tile, has_been_lit=True)
+    model.add_lobby_door("Eastern Lobby Bridge S", "Eastern_Palace")
+    model.update()
+    model.set_items(frozenset(READABLE))
+    model.annotate("Eastern Lobby Bridge N", "Trap Door", [])
+    assert model.door_state("Eastern Lobby Bridge N") is DoorState.OPEN
+
+
+def test_a_door_marked_as_a_bomb_or_dash_door_takes_what_opens_one():
+    door = "Eastern Cannonball N"
+    model = new_model("Eastern_Palace")
+    model.add_tile(DOORS[door].tile, has_been_lit=True)
+    model.add_lobby_door("Eastern Cannonball S", "Eastern_Palace")
+    model.update()
+    for mark, opened_by in (("Bomb Door", [{"Bombs"}]), ("Dash Door", [{"Bombs"}, {"Pegasus Boots"}])):
+        model.annotate(door, mark, [])
+        model.set_items(frozenset())
+        assert model.door_state(door) is DoorState.BLOCKED, mark
+        for items in opened_by:
+            model.set_items(frozenset(items))
+            assert model.door_state(door) is DoorState.OPEN, (mark, items)
+
+
+def test_the_way_past_ganons_towers_middle_boss_takes_the_cape_when_it_is_trinexx():
+    # The supertile's rooms are in a row, joined by doors inside it: GT Quad Pot SW leads to the boss, and past the
+    # boss is the room this door is in
+    past = "GT Beam Dash ES"
+    model = new_model("Ganons_Tower")
+    model.add_tile(DOORS[past].tile, has_been_lit=True)
+    model.add_lobby_door("GT Quad Pot Up Stairs", "Ganons_Tower")
+    model.update()
+    without = frozenset(READABLE - {"Cape"})
+    model.set_items(without)
+    assert model.door_state(past) is DoorState.OPEN
+    model.set_boss(DOORS[past].tile, "Trinexx")
+    assert model.door_state(past) is DoorState.BLOCKED
+    model.set_items(without | {"Cape"})
+    assert model.door_state(past) is DoorState.OPEN
+
+
 def test_the_chests_in_the_two_cells_take_the_big_key():
     cells = (
         ("Thieves' Town - Blind's Cell", "Thieves_Town", "Thieves Blind's Cell WS", "Big Key (Thieves Town)"),
