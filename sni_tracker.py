@@ -26,6 +26,7 @@ mem_addresses = {
     "race": (0x180213, 0x1),
     "seed_hash": (0x180215, 0x5),  # the code shown on the file select screen; differs per seed
     "gamemode": (0xF50010, 0x1),
+    "submodule": (0xF50011, 0x1),
     "indoors": (0xF5001B, 0x1),
     "link_y": (0xF50020, 0x2),
     "link_x": (0xF50022, 0x2),
@@ -59,6 +60,9 @@ READINGS_PER_CHECK_READ = 10
 FILE_MODES = set(range(0x06, 0x1C)) - {0x0C, 0x0D, 0x14}
 # The player walking about: in a dungeon or on the overworld, or either being loaded
 WALKING_MODES = range(0x06, 0x0B)
+# The dungeon mode's submodules for the stairs inside a room, up and down, as read. The game counts through them
+# as it does through a door, but no door is passed
+IN_ROOM_STAIRS = {"08", "10"}
 
 
 def build_multi_request(add_space, mem_mapping, addresses=mem_addresses):
@@ -390,7 +394,8 @@ async def _sni_session(
                 ui.select_dungeon(dungeon_ids[data["dungeon"]])
 
             if data["transitioning"] != "00":
-                game.was_transitioning = True
+                if data["submodule"] not in IN_ROOM_STAIRS:
+                    game.was_transitioning = True
                 await asyncio.sleep(0.1)
                 continue
 

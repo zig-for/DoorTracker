@@ -32,8 +32,13 @@ def door_facing(facing, avoid=None):
     raise AssertionError(f"no {facing} door")
 
 
-def reading(tile, x, y, lamp=True, transitioning=False, indoors=True, seed="0102030405", falling=False, dungeon=DUNGEON):
-    """What the tracker reads from memory with the player at pixel (x, y) of a supertile."""
+def reading(
+    tile, x, y, lamp=True, transitioning=False, on_stairs=False, layer="00", indoors=True, seed="0102030405", falling=False, dungeon=DUNGEON
+):
+    """What the tracker reads from memory with the player at pixel (x, y) of a supertile.
+
+    transitioning: passing through a door. on_stairs: going down the stairs inside a room.
+    """
 
     def coordinate(supertile, pixel):
         half = 1 if pixel > 255 else 0
@@ -43,13 +48,14 @@ def reading(tile, x, y, lamp=True, transitioning=False, indoors=True, seed="0102
         "race": "00",
         "seed_hash": seed,
         "gamemode": "07",
+        "submodule": "10" if on_stairs else "02" if transitioning else "00",
         "indoors": "01" if indoors else "00",
         "link_y": coordinate(tile[1], y),
         "link_x": coordinate(tile[0], x),
         "falling": "02" if falling else "00",
         "mirror": "00",
-        "transitioning": "01" if transitioning else "00",
-        "layer": "00",
+        "transitioning": "01" if transitioning or on_stairs else "00",
+        "layer": layer,
         "dead": "00",
         "dungeon": dungeon,
         "lampcone": "01" if lamp else "00",
@@ -179,6 +185,32 @@ def test_walking_through_a_door_and_into_a_dark_room(window, app, monkeypatch):
     # Dark with no lamp: on the map but hidden, and the player is not drawn
     assert seen["lamp lit"] == {**seen["lamp lit"], "player": None, "dark room lit": False, "dark room hidden": True}
     assert seen["end"] == {**seen["end"], "player": DARK_ROOM, "dark room lit": True, "dark room hidden": False}
+
+
+def test_the_stairs_inside_a_room_are_not_a_door_passed(window, app, monkeypatch):
+    eastern = next(number for number, tab in sni_tracker.dungeon_ids.items() if tab == "Eastern_Palace")
+    room = (9, 11)
+    (door,) = [entry for entry in door_coordinates[room] if entry["name"] == "Eastern Cannonball N"]
+    at_door = (room, door["x"], door["y"])
+    # By the foot of the stairs down from that door, where the nearest door is one of the room's ledge
+    below = (room, 352, 132)
+    assert sni_tracker.find_closest_door(*below[1:], room, "01") == "Eastern Cannonball Ledge Key Door EN"
+
+    play(
+        window,
+        app,
+        monkeypatch,
+        [
+            ("start", reading(*at_door, dungeon=eastern)),
+            ("in the room", reading(*at_door, dungeon=eastern)),
+            ("on the stairs", reading(*below, on_stairs=True, dungeon=eastern)),
+            ("off them", reading(*below, layer="01", dungeon=eastern)),
+            ("standing there", reading(*below, layer="01", dungeon=eastern)),
+        ],
+    )
+
+    model = window.pages["Eastern_Palace"].model
+    assert model.player.node == model.real_rooms.node("Eastern Cannonball N")
 
 
 def test_the_tracker_stops_when_the_window_says_to_disconnect(window, app, monkeypatch):
