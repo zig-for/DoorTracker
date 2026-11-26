@@ -12,6 +12,9 @@ tracker cannot read like "Open Floodgate", so a rule here never asks for more th
 beating each boss takes is read from Bosses.py, for a room's boss once the player has picked it
 (gui/Doors/bosses.py).
 
+A door that is only come in by, like the sanctuary's north door, has no rule in Rules.py: the randomizer has it as
+blocked, in Doors.py. It is kept here as a way out that nothing opens.
+
 One setting can be told from the game: a standard seed is one where Zelda has not been delivered yet. The rules
 standard_rules sets are kept as holding until she is.
 """
@@ -240,6 +243,9 @@ def read() -> tuple[dict[str, Rule], dict[str, list[tuple[Condition, Rule]]], di
         found[key] = combine("all", [found.get(key, True), combine("any", [ZELDA_DELIVERED, rule])])
     walked = {name for names in regions_to_doors.values() for name in names}
     passages = {name: rule for (kind, name), rule in found.items() if kind == "get_entrance" and name in walked and rule is not True}
+    # The randomizer goes out by no door or passage it has as blocked (update_reachable_regions in BaseClasses.py),
+    # and a seed only opens the trap doors among them. The others are no way out in any seed
+    passages |= {door.name: False for door in doors_and_portals()[0] if door.blocked and not door.trapFlag and door.name in walked}
     # Every rule that depends on the seed is a passage's
     assert all(kind == "get_entrance" and name in walked for kind, name in sometimes)
     seeded = {name: rules for (_kind, name), rules in sometimes.items()}

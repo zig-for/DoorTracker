@@ -131,6 +131,28 @@ def test_the_switch_rooms_door_takes_the_cane_or_the_block_dropped_from_above():
     assert model.door_state(door) is DoorState.OPEN
 
 
+def test_the_sanctuarys_north_door_is_only_come_in_by():
+    link = ("Sanctuary N", "Sewers Pull Switch S")
+    # From the sanctuary: no way out north, linked or not
+    model = new_model("Hyrule_Castle")
+    for door in link:
+        model.add_tile(DOORS[door].tile, has_been_lit=True)
+    model.add_lobby_door("Sanctuary S", "Sanctuary")
+    model.update()
+    model.set_items(frozenset(READABLE))
+    assert model.door_state("Sanctuary N") is DoorState.BLOCKED
+    model.add_link(*link)
+    assert model.door_state("Sewers Pull Switch Down Stairs") is DoorState.BLOCKED
+    # From the sewers: into the sanctuary
+    model = new_model("Hyrule_Castle")
+    for door in link:
+        model.add_tile(DOORS[door].tile, has_been_lit=True)
+    model.add_lobby_door("Sewers Pull Switch Down Stairs", "Sanctuary")
+    model.add_link(*link)
+    model.set_items(frozenset(READABLE))
+    assert model.door_state("Sanctuary S") is DoorState.OPEN
+
+
 def test_a_door_marked_as_a_trap_door_takes_what_the_randomizer_has_for_it_as_one():
     door = "Ice Switch Room ES"
     model = new_model("Ice_Palace")
