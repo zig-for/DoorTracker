@@ -1150,7 +1150,7 @@ class GraphPage(QWidget):
                 self.scene.addItem(label)
                 self._labels[node] = label
 
-        for door, icon in model.special_doors.items():
+        for door, icon in model.marks().items():
             if door not in DOORS:
                 continue  # a file can name doors this version does not know
             node = self.model.rooms.node(door)
@@ -1505,8 +1505,9 @@ class GraphPage(QWidget):
             door = hit.door
             target = model.link_map().get(door)
             text = door + (f"  →  {target}" if target else "")
-            if door in model.special_doors:
-                text += f"   [{model.special_doors[door]}]"
+            marks = model.marks()
+            if door in marks:
+                text += f"   [{marks[door]}]"
             focus = model.rooms.node(door)
         elif hit.edge is not None:
             edge = hit.edge
@@ -1543,7 +1544,7 @@ class GraphPage(QWidget):
                 text = f"{', '.join(model.rooms.regions(node)[:4]) or model.rooms.title(node)}   (EG {node.x},{node.y})"
             focus = node
         elif hit.icon is not None:
-            text = f"{hit.icon}: {model.special_doors.get(hit.icon, '')}"
+            text = f"{hit.icon}: {model.marks().get(hit.icon, '')}"
             focus = model.rooms.node(hit.icon)
         else:
             text, focus = "", None

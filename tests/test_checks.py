@@ -7,7 +7,7 @@ from data.doors_data import regions_to_doors
 from data.doors_sprite_data import REACHABLE
 from gui.Doors.checks import checks
 from gui.Doors.graph_model import CHECKS_BY_TILE, CheckState, DoorState
-from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, NO_SWORDS, ORANGE, READABLE, SWORD, holds, items_held, with_hearts
+from gui.Doors.logic import HEARTS, ITEMS_AT, ITEMS_LENGTH, NO_SWORDS, ORANGE, READABLE, SWAMP_IN_PLACE, SWORD, holds, items_held, settings_held, with_hearts
 from gui.Doors.rooms import DOORS, SPLIT, Node
 from gui.Doors.rules import check_regions, check_rules, passage_rules, seeded_rules
 from gui.qt.style import BLOCKED, DOOR_OPEN
@@ -200,6 +200,26 @@ def test_a_door_marked_as_a_bomb_or_dash_door_takes_what_opens_one():
             assert model.door_state(door) is DoorState.OPEN, (mark, items)
 
 
+def test_a_bomb_or_dash_door_is_one_from_the_other_side_too():
+    marked, other, past = "Eastern Cannonball N", "Eastern Darkness S", "Eastern Cannonball S"
+    model = new_model("Eastern_Palace")
+    for door in (marked, other):
+        model.add_tile(DOORS[door].tile, has_been_lit=True)
+    model.add_lobby_door("Eastern Darkness NE", "Eastern_Palace")
+    model.add_link(marked, other)
+    model.annotate(marked, "Bomb Door", [])
+    assert model.marks()[other] == "Bomb Door"
+    model.set_items(frozenset())
+    assert model.door_state(past) is DoorState.BLOCKED
+    model.set_items(frozenset({"Bombs"}))
+    assert model.door_state(past) is DoorState.OPEN
+    # Taking the icon off either side takes it off the door
+    model.remove_annotation(other)
+    assert marked not in model.marks()
+    model.set_items(frozenset())
+    assert model.door_state(past) is DoorState.OPEN
+
+
 def test_the_way_past_ganons_towers_middle_boss_takes_the_cape_when_it_is_trinexx():
     # The supertile's rooms are in a row, joined by doors inside it: GT Quad Pot SW leads to the boss, and past the
     # boss is the room this door is in
@@ -210,6 +230,8 @@ def test_the_way_past_ganons_towers_middle_boss_takes_the_cape_when_it_is_trinex
     model.update()
     without = frozenset(READABLE - {"Cape"})
     model.set_items(without)
+    assert model.door_state(past) is DoorState.OPEN
+    model.set_boss(DOORS[past].tile, "Armos Knights")
     assert model.door_state(past) is DoorState.OPEN
     model.set_boss(DOORS[past].tile, "Trinexx")
     assert model.door_state(past) is DoorState.BLOCKED
@@ -229,6 +251,11 @@ def test_a_swordless_seed_takes_its_own_rules():
     assert not holds(seeded_rules["Ice Lobby SE"]["trapped", "Ice Lobby SE"], frozenset({"Bombos"}))
 
 
+def test_the_rom_says_whether_the_dam_or_the_way_in_to_the_swamps_palace_is_moved():
+    assert settings_held(b"\x00") == {SWAMP_IN_PLACE}
+    assert settings_held(b"\x01") == frozenset()
+
+
 def test_the_chests_past_the_gap_in_the_dms_room_take_the_hookshot():
     # Without glitches: the randomizer has a bomb jump for the others
     rule = check_rules["Ganons Tower - DMs Room - Top Left"]
@@ -237,8 +264,12 @@ def test_the_chests_past_the_gap_in_the_dms_room_take_the_hookshot():
 
 def test_the_pits_in_skull_woods_take_the_star_tile_stepped_on():
     # The randomizer keeps the rule under a name before it sets it
-    assert passage_rules["Skull 2 West Lobby Ledge Pits"] == "Hidden Pits"
-    assert passage_rules["Skull 2 West Lobby Pits"] == ("any", "Pegasus Boots", "Hidden Pits")
+    from_the_ledge, from_the_floor = passage_rules["Skull 2 West Lobby Ledge Pits"], passage_rules["Skull 2 West Lobby Pits"]
+    assert holds(from_the_ledge, frozenset({"Hidden Pits"}))
+    assert not holds(from_the_ledge, frozenset({"Pegasus Boots"}))
+    assert holds(from_the_floor, frozenset({"Hidden Pits"}))
+    assert holds(from_the_floor, frozenset({"Pegasus Boots"}))
+    assert not holds(from_the_floor, frozenset())
 
 
 def test_the_chests_in_the_two_cells_take_the_big_key():

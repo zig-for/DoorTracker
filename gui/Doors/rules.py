@@ -36,7 +36,7 @@ from ALttPDoorRandomizer.DoorShuffle import trap_door_exceptions  # noqa: E402
 from ALttPDoorRandomizer.DungeonGenerator import special_big_key_doors  # noqa: E402
 from ALttPDoorRandomizer.Regions import location_events  # noqa: E402  location -> the event it gives
 
-# The randomizer's functions that set rules, in the order set_rules gets to them: a later rule can add to an
+# The randomizer's functions whose rules are read, in the order set_rules gets to them: a later rule can add to an
 # earlier one, or take its place. With each, what holds in the seeds its rules are set in: True for every seed
 FUNCTIONS: tuple[tuple[types.FunctionType, Rule], ...] = (
     (Rules.global_rules, True),
