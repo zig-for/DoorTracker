@@ -200,13 +200,11 @@ def test_a_door_marked_as_a_bomb_or_dash_door_takes_what_opens_one():
             assert model.door_state(door) is DoorState.OPEN, (mark, items)
 
 
-def test_a_bomb_or_dash_door_is_one_from_the_other_side_too():
-    marked, other, past = "Eastern Cannonball N", "Eastern Darkness S", "Eastern Cannonball S"
+def test_a_bomb_or_dash_door_inside_a_supertile_is_one_from_both_sides():
+    marked, other, past = "Eastern Lobby Bridge S", "Eastern Lobby N", "Eastern Lobby Bridge N"
     model = new_model("Eastern_Palace")
-    for door in (marked, other):
-        model.add_tile(DOORS[door].tile, has_been_lit=True)
-    model.add_lobby_door("Eastern Darkness NE", "Eastern_Palace")
-    model.add_link(marked, other)
+    model.add_tile(DOORS[marked].tile, has_been_lit=True)
+    model.add_lobby_door("Eastern Lobby S", "Eastern_Palace")
     model.annotate(marked, "Bomb Door", [])
     assert model.marks()[other] == "Bomb Door"
     model.set_items(frozenset())
@@ -218,6 +216,33 @@ def test_a_bomb_or_dash_door_is_one_from_the_other_side_too():
     assert marked not in model.marks()
     model.set_items(frozenset())
     assert model.door_state(past) is DoorState.OPEN
+
+
+def test_a_bomb_or_dash_door_between_supertiles_is_one_from_its_own_side():
+    # A seed can make one side a bomb door and leave the other as it was
+    marked, other, past = "Eastern Cannonball N", "Eastern Darkness S", "Eastern Cannonball S"
+    model = new_model("Eastern_Palace")
+    for door in (marked, other):
+        model.add_tile(DOORS[door].tile, has_been_lit=True)
+    model.add_lobby_door("Eastern Darkness NE", "Eastern_Palace")
+    model.add_link(marked, other)
+    model.annotate(marked, "Bomb Door", [])
+    assert other not in model.marks()
+    model.set_items(frozenset())
+    assert model.door_state(past) is DoorState.OPEN
+
+
+def test_the_way_across_the_falling_bridge_takes_what_its_door_does():
+    # The randomizer has the passage go out by the door, and take what the door's kind takes
+    model = new_model("Misery_Mire")
+    model.add_tile(DOORS["Mire Falling Bridge WS"].tile, has_been_lit=True)
+    model.add_lobby_door("Mire Falling Bridge W", "Misery_Mire")
+    model.set_items(frozenset())
+    assert model.door_state("Mire Lone Shooter WS") is DoorState.OPEN
+    model.annotate("Mire Falling Bridge WS", "Bomb Door", [])
+    assert model.door_state("Mire Lone Shooter WS") is DoorState.BLOCKED
+    model.set_items(frozenset({"Bombs"}))
+    assert model.door_state("Mire Lone Shooter WS") is DoorState.OPEN
 
 
 def test_the_way_past_ganons_towers_middle_boss_takes_the_cape_when_it_is_trinexx():

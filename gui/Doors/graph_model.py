@@ -42,6 +42,7 @@ from gui.Doors.rules import (
     events,
     open_trap_doors,
     passage_rules,
+    passages_out_by,
     seeded_rules,
 )
 from gui.Doors.rooms import (
@@ -409,7 +410,7 @@ class GraphModel:
         shown = {Node(*tile) for tile in self.tiles if self.rooms.part_count(tile) == 1}
         self._whole = set()
         if split:
-            used = set(self.marks())
+            used = set(self.special_doors)
             for link in self.door_links:
                 used.update((link.door, link.linked_door))
             used.update(entry.door for entry in self.lobby_doors)
@@ -674,31 +675,26 @@ class GraphModel:
         if door == "Sanctuary Mirror Route":
             return
         self.lobby_doors = [x for x in self.lobby_doors if x.door != door]
-        if door not in self.special_doors:
-            # A bomb or dash door's icon, from the mark on its other side
-            door = next((marked for marked in self.special_doors if self._other_side(marked) == door), door)
+        across = ACROSS.get(door)
+        if door not in self.special_doors and across is not None and self.special_doors.get(across) in DOOR_KINDS:
+            door = across  # a bomb or dash door's icon, from the mark across from it
         self.special_doors.pop(door, None)
         self.update()
 
-    def _other_side(self, door: str) -> str | None:
-        """The door on the other side of a door: the one it is linked to, or the one across from it inside a
-        supertile."""
-        return self.link_map().get(door, ACROSS.get(door))
-
     def door_kinds(self) -> dict[str, str]:
-        """Door -> its mark as a bomb or dash door. The randomizer makes both sides of a door one, so the door on
-        the other side of a marked one is one too."""
+        """Door -> its mark as a bomb or dash door. The two sides of a door inside a supertile are one door to the
+        randomizer, so the door across from a marked one is one too. Between supertiles a seed can make one side
+        a bomb or dash door and not the other, so there a mark is for its own side."""
         found = {}
         for door, icon in self.special_doors.items():
             if icon in DOOR_KINDS:
                 found[door] = icon
-                other = self._other_side(door)
-                if other is not None:
-                    found.setdefault(other, icon)
+                if door in ACROSS:
+                    found.setdefault(ACROSS[door], icon)
         return found
 
     def marks(self) -> dict[str, str]:
-        """Door -> the icon on it: its own, or else the one that says it is the other side of a bomb or dash door."""
+        """Door -> the icon on it: its own, or else the one of the bomb or dash door it is the other side of."""
         return self.door_kinds() | self.special_doors
 
     # ------------------------------------------------------- auto tracking entry
@@ -1808,13 +1804,16 @@ class GraphModel:
         found = {way: combine("all", [rule for condition, rule in rules.items() if self._seed_has(condition)]) for way, rules in seeded_rules.items()}
         # A bomb or dash door is one whatever else is marked on it
         for door, icon in (self.special_doors | self.door_kinds()).items():
+            ways = [door]
             if icon in DOOR_KINDS:
                 rule = door_kind_rules[DOOR_KINDS[icon]]
+                ways += passages_out_by.get(door, [])
             elif icon == "Trap Door" and door not in open_trap_doors:
                 rule = False
             else:
                 continue
-            found[door] = combine("all", [found.get(door, True), rule])
+            for way in ways:
+                found[way] = combine("all", [found.get(way, True), rule])
         return found
 
     def _kill_ways(self) -> dict[str, str]:

@@ -363,6 +363,13 @@ def read_bosses() -> dict[str, tuple[Rule, Rule]]:
 passage_rules, seeded_rules, check_rules, check_regions, events = read()
 crystals = read_crystals()
 door_kind_rules = read_door_kinds()
+# Door -> the passages the randomizer has go out by it (a door's dependents), which bomb_rules has take what the
+# door's kind takes. Without the ones the map already has under the door's own name
+passages_out_by = {
+    door.name: ways
+    for door in doors_and_portals()[0]
+    if (ways := [passage.name for passage in door.dependents if any(passage.name in names for names in regions_to_doors.values())])
+}
 # A trap door is no way out, but for these, which are one with whatever their rules take: the ones the randomizer
 # keeps as a way out when a seed makes them trap doors, and the original game's trap doors that are a way out
 open_trap_doors = frozenset(trap_door_exceptions) | {door.name for door in doors_and_portals()[0] if door.trapFlag and not door.blocked}
