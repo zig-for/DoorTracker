@@ -149,7 +149,8 @@ class Reader:
 
     def condition(self, test: ast.expr) -> Condition | None:
         """What an "if" in Rules.py asks of the seed, or None where the map cannot tell."""
-        if called(test) == "is_trapped" and isinstance(test, ast.Call):
+        if called(test) == "is_trapped":
+            assert isinstance(test, ast.Call)
             door = text(test.args[0])
             return ("trapped", door) if door else None
         if isinstance(test, ast.Attribute) and test.attr == "trapped" and isinstance(test.value, ast.Attribute) and test.value.attr == "door":
